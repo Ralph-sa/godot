@@ -3,6 +3,8 @@
 /**************************************************************************/
 
 #include "os_harmonyos.h"
+#include "dir_access_harmonyos.h"
+#include "file_access_harmonyos.h"
 #include "joypad_harmonyos.h"
 
 #include "core/config/engine.h"
@@ -65,6 +67,19 @@ void OS_HarmonyOS::delete_main_loop() {
 		memdelete(main_loop);
 		main_loop = nullptr;
 	}
+}
+
+void OS_HarmonyOS::initialize_core() {
+	// Call Unix base class to set up POSIX threads and clock
+	OS_Unix::initialize_core();
+
+	// Override with HarmonyOS sandbox-aware implementations
+	FileAccess::make_default<FileAccessHarmonyOS>(FileAccess::ACCESS_RESOURCES);
+	FileAccess::make_default<FileAccessHarmonyOS>(FileAccess::ACCESS_USERDATA);
+	FileAccess::make_default<FileAccessHarmonyOS>(FileAccess::ACCESS_FILESYSTEM);
+	DirAccess::make_default<DirAccessHarmonyOS>(DirAccess::ACCESS_RESOURCES);
+	DirAccess::make_default<DirAccessHarmonyOS>(DirAccess::ACCESS_USERDATA);
+	DirAccess::make_default<DirAccessHarmonyOS>(DirAccess::ACCESS_FILESYSTEM);
 }
 
 void OS_HarmonyOS::initialize() {

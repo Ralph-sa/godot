@@ -43,6 +43,7 @@ public:
 	virtual String get_config_path() const override;
 	virtual String get_data_path() const override;
 
+	virtual void initialize_core() override;
 	virtual void initialize() override;
 	virtual void initialize_joypads() override;
 	virtual void finalize() override;
