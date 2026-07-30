@@ -48,6 +48,11 @@ protected:
 	DisplayServerEnums::WindowMode _window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
 	TTS_HarmonyOS *tts = nullptr;
 
+	String _ime_text;
+	Vector2i _ime_selection;
+	Point2i _ime_cursor_pos;
+	bool _ime_active = true;
+
 public:
 	static DisplayServerHarmonyOS *get_singleton();
 
@@ -76,6 +81,11 @@ public:
 	virtual void window_set_input_text_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;
 	virtual void window_set_rect_changed_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;
 	virtual void window_set_drop_files_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;
+
+	virtual void ime_text(const String &p_text);
+	virtual void ime_selection(const Vector2i &p_selection);
+	virtual void window_set_ime_active(const bool p_active, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;
+	virtual void window_set_ime_position(const Point2i &p_pos, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;
 
 	void send_window_event(DisplayServerEnums::WindowEvent p_event, bool p_deferred = false) const;
 	void send_input_event(const Ref<InputEvent> &p_event) const;

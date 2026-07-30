@@ -6,6 +6,7 @@
 
 #include "harmonyos_input.h"
 
+#include "display_server_harmonyos.h"
 #include "core/input/input.h"
 #include "core/input/input_event.h"
 
@@ -347,6 +348,11 @@ void process_touch_event(int touch_id, int action, double x, double y) {
 
 void process_input_text(const char *text) {
 	if (!text || text[0] == '\0') return;
+
+	DisplayServerHarmonyOS *ds = static_cast<DisplayServerHarmonyOS *>(DisplayServer::get_singleton());
+	if (ds) {
+		ds->ime_text(String::utf8(text));
+	}
 
 	Ref<InputEventKey> key_event;
 	key_event.instantiate();

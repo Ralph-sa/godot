@@ -37,6 +37,7 @@ bool DisplayServerHarmonyOS::has_feature(DisplayServerEnums::Feature p_feature) 
 		case DisplayServerEnums::FEATURE_KEEP_SCREEN_ON:
 		case DisplayServerEnums::FEATURE_CLIPBOARD:
 		case DisplayServerEnums::FEATURE_CURSOR_SHAPE:
+		case DisplayServerEnums::FEATURE_IME:
 		case DisplayServerEnums::FEATURE_MOUSE:
 		case DisplayServerEnums::FEATURE_TOUCHSCREEN:
 			return true;
@@ -507,6 +508,27 @@ void DisplayServerHarmonyOS::reset_window() {
 	}
 }
 #endif // VULKAN_ENABLED
+
+// ---- IME ----
+
+void DisplayServerHarmonyOS::ime_text(const String &p_text) {
+	_ime_text = p_text;
+	if (input_text_callback.is_valid()) {
+		input_text_callback.call(p_text);
+	}
+}
+
+void DisplayServerHarmonyOS::ime_selection(const Vector2i &p_selection) {
+	_ime_selection = p_selection;
+}
+
+void DisplayServerHarmonyOS::window_set_ime_active(const bool p_active, DisplayServerEnums::WindowID p_window) {
+	_ime_active = p_active;
+}
+
+void DisplayServerHarmonyOS::window_set_ime_position(const Point2i &p_pos, DisplayServerEnums::WindowID p_window) {
+	_ime_cursor_pos = p_pos;
+}
 
 // ---- constructor / destructor ----
 
