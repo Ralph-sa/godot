@@ -694,6 +694,10 @@ namespace embree
         }
     });
 #endif
+#elif defined(__OHOS__)
+    // HarmonyOS (musl libc): pthread_getaffinity_np is not available, use sysconf.
+    nThreads = sysconf(_SC_NPROCESSORS_ONLN);
+    assert(nThreads);
 #else
     cpu_set_t set;
     if (pthread_getaffinity_np(pthread_self(), sizeof(set), &set) == 0)
