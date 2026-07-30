@@ -56,16 +56,7 @@ static int32_t OnWriteData(OH_AudioRenderer *renderer, void *user_data,
 // Called when an audio stream event occurs (error, underrun, etc.)
 static int32_t OnStreamEvent(OH_AudioRenderer *renderer, void *user_data,
                               OH_AudioStream_Event event) {
-    switch (event) {
-        case AUDIOSTREAM_EVENT_BUFFER_UNDERRUN:
-            OH_LOG_WARN(LOG_APP, "OHAudio: Buffer underrun");
-            break;
-        case AUDIOSTREAM_EVENT_BUFFER_OVERRUN:
-            OH_LOG_WARN(LOG_APP, "OHAudio: Buffer overrun");
-            break;
-        default:
-            break;
-    }
+    OH_LOG_WARN(LOG_APP, "OHAudio: Stream event type=%{public}d", static_cast<int>(event));
     return 0;
 }
 

@@ -185,9 +185,14 @@ ObjectID DisplayServerHarmonyOS::window_get_attached_instance_id(DisplayServerEn
 }
 
 void DisplayServerHarmonyOS::window_set_title(const String &p_title, DisplayServerEnums::WindowID p_window) {
-	// Forward title change to ArkTS via NAPI callback
-	extern void harmonyos_notify_window_title(const char *title);
-	harmonyos_notify_window_title(p_title.utf8().get_data());
+	// Forward title change to ArkTS via NAPI callback.
+	// The actual callback is registered from ArkTS at runtime.
+	// We use a weak symbol so linking succeeds even when libgodot.so
+	// is built standalone without the NAPI bridge.
+	extern void harmonyos_notify_window_title(const char *title) __attribute__((weak));
+	if (harmonyos_notify_window_title) {
+		harmonyos_notify_window_title(p_title.utf8().get_data());
+	}
 }
 
 int DisplayServerHarmonyOS::window_get_current_screen(DisplayServerEnums::WindowID p_window) const {

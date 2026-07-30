@@ -16,6 +16,11 @@
 #include <vector>
 #include <atomic>
 
+// Explicit visibility attribute for dlopen/dlsym by NAPI bridge.
+// Must be on definitions, not just declarations, to override
+// the -fvisibility=hidden build flag.
+#define HARMONYOS_EXPORT_FN __attribute__((visibility("default")))
+
 static HarmonyOSNativeWindow *g_native_window = nullptr;
 static std::atomic<bool> g_engine_initialized(false);
 static std::atomic<bool> g_os_created(false);
@@ -29,7 +34,7 @@ static struct PlatformInit {
 	}
 } g_platform_init;
 
-int harmonyos_godot_init() {
+HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 	OH_LOG_INFO(LOG_APP, "===== Godot Engine Initialization START =====");
 
 	bool expected = false;
@@ -49,7 +54,6 @@ int harmonyos_godot_init() {
 	}
 
 	// Set command-line arguments for Godot Main
-	// --editor flag enables the editor mode
 	std::vector<char *> args;
 	std::vector<std::string> arg_strings;
 	arg_strings.push_back("godot_harmonyos");
@@ -64,8 +68,6 @@ int harmonyos_godot_init() {
 	Error err = Main::setup(nullptr, 0, args.data());
 	if (err != OK) {
 		OH_LOG_ERROR(LOG_APP, "Main::setup failed with error: %{public}d", err);
-		// Don't return error - Main might have partially initialized
-		// The editor mode requires a project to function
 		OH_LOG_WARN(LOG_APP, "Main::setup returned error, continuing...");
 	}
 
@@ -73,7 +75,7 @@ int harmonyos_godot_init() {
 	return 0;
 }
 
-int harmonyos_godot_surface_created(const char *surface_id) {
+HARMONYOS_EXPORT_FN int harmonyos_godot_surface_created(const char *surface_id) {
 	OH_LOG_INFO(LOG_APP, "Surface created: %{public}s", surface_id);
 
 	if (!g_native_window) {
@@ -82,35 +84,26 @@ int harmonyos_godot_surface_created(const char *surface_id) {
 	}
 
 	// Prevent double-initialization from dual callback paths
-	// (NAPI bridge + XComponent native callback may both fire)
 	bool expected = false;
 	if (!g_surface_created.compare_exchange_strong(expected, true)) {
 		OH_LOG_WARN(LOG_APP, "Surface already created, skipping duplicate callback");
 		return 0;
 	}
 
-	// The XComponent native callback (OnSurfaceCreated_CB in HarmonyOSNativeWindow)
-	// handles setting up the OHNativeWindow pointer. The NAPI bridge path
-	// (this function) triggers display server setup once the surface is ready.
 	if (!g_native_window->initialize_with_xcomponent(nullptr)) {
-		// If XComponent is not available via the native bridge path,
-		// it will be set up by the HarmonyOSNativeWindow callback instead.
 		OH_LOG_INFO(LOG_APP, "XComponent not set via NAPI bridge, waiting for native callback");
 	}
 
-	// Notify DisplayServer that surface is ready
 	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
 	if (ds) {
 		ds->notify_surface_created();
 
-		// Ensure Vulkan global context is initialized before resetting the window.
-		// Without this, reset_window() will silently skip Vulkan window creation
-		// because rendering_context_global is still nullptr.
+		// Ensure Vulkan global context is initialized before reset_window
 		bool vulkan_ok = ds->check_vulkan_global_context(true);
 		if (vulkan_ok) {
 			ds->reset_window();
 		} else {
-			OH_LOG_ERROR(LOG_APP, "Vulkan context initialization failed, cannot create window");
+			OH_LOG_ERROR(LOG_APP, "Vulkan context initialization failed");
 		}
 	} else {
 		OH_LOG_WARN(LOG_APP, "DisplayServer not ready for surface reset");
@@ -119,7 +112,7 @@ int harmonyos_godot_surface_created(const char *surface_id) {
 	return 0;
 }
 
-int harmonyos_godot_surface_destroy() {
+HARMONYOS_EXPORT_FN int harmonyos_godot_surface_destroy() {
 	OH_LOG_INFO(LOG_APP, "Surface destroyed");
 
 	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
@@ -136,7 +129,7 @@ int harmonyos_godot_surface_destroy() {
 	return 0;
 }
 
-void harmonyos_godot_cleanup() {
+HARMONYOS_EXPORT_FN void harmonyos_godot_cleanup() {
 	OH_LOG_INFO(LOG_APP, "===== Godot Engine Cleanup START =====");
 
 	if (g_engine_initialized.exchange(false, std::memory_order_acq_rel)) {
@@ -151,7 +144,7 @@ void harmonyos_godot_cleanup() {
 	OH_LOG_INFO(LOG_APP, "===== Godot Engine Cleanup DONE =====");
 }
 
-void harmonyos_godot_on_pause() {
+HARMONYOS_EXPORT_FN void harmonyos_godot_on_pause() {
 	OH_LOG_INFO(LOG_APP, "Application paused");
 	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 
@@ -160,7 +153,7 @@ void harmonyos_godot_on_pause() {
 #endif
 }
 
-void harmonyos_godot_on_resume() {
+HARMONYOS_EXPORT_FN void harmonyos_godot_on_resume() {
 	OH_LOG_INFO(LOG_APP, "Application resumed");
 	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 
@@ -177,12 +170,11 @@ void harmonyos_godot_on_resume() {
 #endif
 }
 
-void harmonyos_godot_on_back_press() {
-	// Handle back button - could show exit confirmation
+HARMONYOS_EXPORT_FN void harmonyos_godot_on_back_press() {
 	OH_LOG_INFO(LOG_APP, "Back pressed");
 }
 
-void harmonyos_godot_terminate(int exit_code) {
+HARMONYOS_EXPORT_FN void harmonyos_godot_terminate(int exit_code) {
 	OH_LOG_INFO(LOG_APP, "Terminate requested with code: %{public}d", exit_code);
 	harmonyos_godot_cleanup();
 	std::exit(exit_code);
@@ -190,23 +182,23 @@ void harmonyos_godot_terminate(int exit_code) {
 
 // ---- Input event forwarding ----
 
-void harmonyos_godot_key_event(int key_code, int event_type, const char *key_text) {
+HARMONYOS_EXPORT_FN void harmonyos_godot_key_event(int key_code, int event_type, const char *key_text) {
 	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 	HarmonyOSInput::process_key_event(key_code, event_type, key_text);
 }
 
-void harmonyos_godot_mouse_event(int button, int action, double x, double y,
-                                  double offset_x, double offset_y) {
+HARMONYOS_EXPORT_FN void harmonyos_godot_mouse_event(int button, int action, double x, double y,
+                                                   double offset_x, double offset_y) {
 	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 	HarmonyOSInput::process_mouse_event(button, action, x, y, offset_x, offset_y);
 }
 
-void harmonyos_godot_touch_event(int touch_id, int action, double x, double y) {
+HARMONYOS_EXPORT_FN void harmonyos_godot_touch_event(int touch_id, int action, double x, double y) {
 	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 	HarmonyOSInput::process_touch_event(touch_id, action, x, y);
 }
 
-void harmonyos_godot_input_text(const char *text) {
+HARMONYOS_EXPORT_FN void harmonyos_godot_input_text(const char *text) {
 	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 	HarmonyOSInput::process_input_text(text);
 }

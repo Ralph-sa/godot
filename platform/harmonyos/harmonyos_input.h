@@ -5,13 +5,12 @@
 #pragma once
 
 #include "core/input/input_enums.h"
+#include "core/input/input_event.h"
 
 namespace HarmonyOSInput {
 
-typedef enum ::Key Key;
-
 // Translate OHOS key code to Godot Key enum.
-Key ohos_key_to_godot(int ohos_keycode);
+::Key ohos_key_to_godot(int ohos_keycode);
 
 // Process keyboard event.
 void process_key_event(int key_code, int event_type, const char *key_text);

@@ -11,6 +11,13 @@
 // The OHNativeWindow type is expected to already be defined by the OHOS SDK
 // headers (native_interface_xcomponent.h → external_window.h) before this
 // file is included. We do NOT redefine it to avoid type conflicts.
+// However, if this file is included before the SDK headers, a guarded
+// forward declaration is provided to make it parseable.
+#ifndef OH_NATIVE_WINDOW
+#define OH_NATIVE_WINDOW
+struct NativeWindow;
+typedef struct NativeWindow OHNativeWindow;
+#endif
 
 #define VK_OHOS_SURFACE_SPEC_VERSION 1
 #define VK_OHOS_SURFACE_EXTENSION_NAME "VK_OHOS_surface"

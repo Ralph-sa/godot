@@ -11,6 +11,7 @@
 
 #include <cstring>
 #include <hilog/log.h>
+#include <atomic>
 
 namespace HarmonyOSInput {
 
@@ -111,10 +112,10 @@ static const int OHOS_KEY_MEDIA_VOLUME_DOWN = 2105;
 static const int OHOS_KEY_MEDIA_VOLUME_MUTE = 2106;
 
 // Modifier tracking
-static bool shift_pressed = false;
-static bool ctrl_pressed = false;
-static bool alt_pressed = false;
-static bool meta_pressed = false;
+static std::atomic<bool> shift_pressed(false);
+static std::atomic<bool> ctrl_pressed(false);
+static std::atomic<bool> alt_pressed(false);
+static std::atomic<bool> meta_pressed(false);
 
 // ==== Key Mapping Function ====
 
@@ -233,19 +234,19 @@ void process_key_event(int key_code, int event_type, const char *key_text) {
 	switch (key_code) {
 		case OHOS_KEY_SHIFT_LEFT:
 		case OHOS_KEY_SHIFT_RIGHT:
-			shift_pressed = (event_type == 0);
+			shift_pressed.store(event_type == 0, std::memory_order_release);
 			break;
 		case OHOS_KEY_CTRL_LEFT:
 		case OHOS_KEY_CTRL_RIGHT:
-			ctrl_pressed = (event_type == 0);
+			ctrl_pressed.store(event_type == 0, std::memory_order_release);
 			break;
 		case OHOS_KEY_ALT_LEFT:
 		case OHOS_KEY_ALT_RIGHT:
-			alt_pressed = (event_type == 0);
+			alt_pressed.store(event_type == 0, std::memory_order_release);
 			break;
 		case OHOS_KEY_META_LEFT:
 		case OHOS_KEY_META_RIGHT:
-			meta_pressed = (event_type == 0);
+			meta_pressed.store(event_type == 0, std::memory_order_release);
 			break;
 	}
 
@@ -278,10 +279,10 @@ void process_key_event(int key_code, int event_type, const char *key_text) {
 	}
 
 	// Attach modifiers
-	key_event->set_shift_pressed(shift_pressed);
-	key_event->set_ctrl_pressed(ctrl_pressed);
-	key_event->set_alt_pressed(alt_pressed);
-	key_event->set_meta_pressed(meta_pressed);
+	key_event->set_shift_pressed(shift_pressed.load(std::memory_order_acquire));
+	key_event->set_ctrl_pressed(ctrl_pressed.load(std::memory_order_acquire));
+	key_event->set_alt_pressed(alt_pressed.load(std::memory_order_acquire));
+	key_event->set_meta_pressed(meta_pressed.load(std::memory_order_acquire));
 
 	Input::get_singleton()->parse_input_event(key_event);
 }
