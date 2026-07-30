@@ -17,6 +17,12 @@ harmonyos_files = [
     "rendering_context_driver_vulkan_harmonyos.cpp",
 ]
 
+if env.editor_build:
+    harmonyos_files += [
+        "export/export.cpp",
+        "export/export_plugin.cpp",
+    ]
+
 env_harmonyos = env.Clone()
 
 harmonyos_objects = []
