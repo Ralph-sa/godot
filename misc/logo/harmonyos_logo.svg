@@ -1,18 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 120" width="512" height="120">
   <defs>
-    <linearGradient id="hmGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+    <linearGradient id="hmGradLight" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" style="stop-color:#1a1a1a;stop-opacity:1" />
       <stop offset="100%" style="stop-color:#333333;stop-opacity:1" />
     </linearGradient>
+    <linearGradient id="hmGradDark" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f0f0f0;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#cccccc;stop-opacity:1" />
+    </linearGradient>
   </defs>
+  <style>
+    .text-main { fill: url(#hmGradLight); }
+    .text-sub { fill: #888888; }
+    @media (prefers-color-scheme: dark) {
+      .text-main { fill: url(#hmGradDark); }
+      .text-sub { fill: #aaaaaa; }
+    }
+  </style>
   <!-- HarmonyOS Logo - simplified typographic mark -->
-  <text x="16" y="82" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="700" fill="url(#hmGrad)" letter-spacing="-2">
+  <text x="16" y="82" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="700" class="text-main" letter-spacing="-2">
     Harmony<tspan fill="#0070F3">O</tspan>S
   </text>
   <!-- Blue underline accent under O -->
   <rect x="280" y="92" width="44" height="4" rx="2" fill="#0070F3"/>
   <!-- Subtitle -->
-  <text x="20" y="108" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#888888" letter-spacing="4">
+  <text x="20" y="108" font-family="Arial, Helvetica, sans-serif" font-size="14" class="text-sub" letter-spacing="4">
     GODOT ENGINE PORT
   </text>
 </svg>
