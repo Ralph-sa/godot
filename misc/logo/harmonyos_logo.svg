@@ -17,14 +17,14 @@
       .text-sub { fill: #aaaaaa; }
     }
   </style>
-  <!-- HarmonyOS Logo - simplified typographic mark -->
+  <!-- GODOT Engine - main branding -->
   <text x="16" y="82" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="700" class="text-main" letter-spacing="-2">
-    Harmony<tspan fill="#0070F3">O</tspan>S
+    GODOT Engine
   </text>
-  <!-- Blue underline accent under O -->
-  <rect x="280" y="92" width="44" height="4" rx="2" fill="#0070F3"/>
-  <!-- Subtitle -->
-  <text x="20" y="108" font-family="Arial, Helvetica, sans-serif" font-size="14" class="text-sub" letter-spacing="4">
-    GODOT ENGINE PORT
+  <!-- Subtitle: HarmonyOS -->
+  <text x="20" y="108" font-family="Arial, Helvetica, sans-serif" font-size="14" class="text-sub" letter-spacing="2">
+    for <tspan fill="#0070F3" font-weight="700" font-size="15">Harmony</tspan><tspan fill="#0070F3" font-weight="900" font-size="15">O</tspan><tspan fill="#0070F3" font-weight="700" font-size="15">S</tspan>
   </text>
+  <!-- Blue underline under O in HarmonyOS -->
+  <rect x="207" y="112" width="16" height="2.5" rx="1.25" fill="#0070F3"/>
 </svg>
