@@ -19,6 +19,7 @@
 #endif
 
 #include <atomic>
+#include <dlfcn.h>
 
 static std::atomic<RenderingContextDriver *> rendering_context_global(nullptr);
 static std::atomic<bool> rendering_context_global_checked(false);
@@ -35,11 +36,8 @@ bool DisplayServerHarmonyOS::has_feature(DisplayServerEnums::Feature p_feature) 
 		case DisplayServerEnums::FEATURE_KEEP_SCREEN_ON:
 		case DisplayServerEnums::FEATURE_CLIPBOARD:
 		case DisplayServerEnums::FEATURE_CURSOR_SHAPE:
-		case DisplayServerEnums::FEATURE_CUSTOM_CURSOR_SHAPE:
 		case DisplayServerEnums::FEATURE_MOUSE:
 		case DisplayServerEnums::FEATURE_TOUCHSCREEN:
-		case DisplayServerEnums::FEATURE_NATIVE_DIALOG:
-		case DisplayServerEnums::FEATURE_IME:
 			return true;
 		default:
 			return false;
@@ -52,21 +50,75 @@ String DisplayServerHarmonyOS::get_name() const {
 
 // ---- clipboard ----
 //
-// NOTE: OHOS pasteboard (<pasteboard/pasteboard.h>) may not be available
-// in all NDK versions. The current implementation stores text in a static
-// buffer. The real OH_Pasteboard integration should be added when the
-// pasteboard NDK API is available (API 20+ with pasteboard SDK component).
-//
-// See: https://developer.huawei.com/consumer/en/doc/harmonyos-references/pasteboard
+// Integration with OH_Pasteboard API via dynamic loading (dlopen/dlsym).
+// On devices with pasteboard support (API 20+), the system clipboard is used.
+// Falls back to an internal static buffer when the library is unavailable.
 
-static String g_clipboard_text;
+// OH_Pasteboard API function pointer types
+typedef void *(*PasteboardCreateFunc)();
+typedef int32_t (*PasteboardSetDataFunc)(void *, const char *, size_t);
+typedef int32_t (*PasteboardGetDataFunc)(void *, char **, size_t *);
+typedef void (*PasteboardDestroyFunc)(void *);
+
+static void *s_pasteboard_lib = nullptr;
+static PasteboardCreateFunc s_pasteboard_create = nullptr;
+static PasteboardSetDataFunc s_pasteboard_set_data = nullptr;
+static PasteboardGetDataFunc s_pasteboard_get_data = nullptr;
+static PasteboardDestroyFunc s_pasteboard_destroy = nullptr;
+static bool s_pasteboard_checked = false;
+
+static String s_clipboard_fallback;
+
+static void _ensure_pasteboard_loaded() {
+	if (s_pasteboard_checked) {
+		return;
+	}
+	s_pasteboard_checked = true;
+
+	s_pasteboard_lib = dlopen("libpasteboard_ndk.z.so", RTLD_LAZY);
+	if (!s_pasteboard_lib) {
+		return;
+	}
+
+	s_pasteboard_create = (PasteboardCreateFunc)dlsym(s_pasteboard_lib, "OH_Pasteboard_CreatePasteboard");
+	s_pasteboard_set_data = (PasteboardSetDataFunc)dlsym(s_pasteboard_lib, "OH_Pasteboard_SetPasteData");
+	s_pasteboard_get_data = (PasteboardGetDataFunc)dlsym(s_pasteboard_lib, "OH_Pasteboard_GetPasteData");
+	s_pasteboard_destroy = (PasteboardDestroyFunc)dlsym(s_pasteboard_lib, "OH_Pasteboard_DestroyPasteboard");
+}
 
 void DisplayServerHarmonyOS::clipboard_set(const String &p_text) {
-	g_clipboard_text = p_text;
+	_ensure_pasteboard_loaded();
+
+	if (s_pasteboard_create && s_pasteboard_set_data && s_pasteboard_destroy) {
+		void *pasteboard = s_pasteboard_create();
+		if (pasteboard) {
+			CharString utf8 = p_text.utf8();
+			s_pasteboard_set_data(pasteboard, utf8.get_data(), utf8.length());
+			s_pasteboard_destroy(pasteboard);
+		}
+	}
+
+	s_clipboard_fallback = p_text;
 }
 
 String DisplayServerHarmonyOS::clipboard_get() const {
-	return g_clipboard_text;
+	_ensure_pasteboard_loaded();
+
+	if (s_pasteboard_create && s_pasteboard_get_data && s_pasteboard_destroy) {
+		void *pasteboard = s_pasteboard_create();
+		if (pasteboard) {
+			char *data = nullptr;
+			size_t len = 0;
+			if (s_pasteboard_get_data(pasteboard, &data, &len) == 0 && data && len > 0) {
+				String result = String::utf8(data, len);
+				s_pasteboard_destroy(pasteboard);
+				return result;
+			}
+			s_pasteboard_destroy(pasteboard);
+		}
+	}
+
+	return s_clipboard_fallback;
 }
 
 // ---- screen ----

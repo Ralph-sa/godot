@@ -25,8 +25,6 @@
 // NOT because Android does the same.
 class OS_HarmonyOS : public OS_Unix {
 private:
-	Size2i display_size;
-
 	mutable String data_dir_cache;
 	mutable String cache_dir_cache;
 

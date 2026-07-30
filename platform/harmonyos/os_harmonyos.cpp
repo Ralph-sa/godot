@@ -168,8 +168,6 @@ bool OS_HarmonyOS::main_loop_iterate() {
 }
 
 OS_HarmonyOS::OS_HarmonyOS() {
-	display_size = Size2i(1920, 1080);
-
 #ifdef HARMONYOS_ENABLED
 	OH_LOG_INFO(LOG_APP, "Godot HarmonyOS OS layer initialized");
 #endif
