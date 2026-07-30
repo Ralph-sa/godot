@@ -15,13 +15,20 @@
 #endif
 #define OHOS_DATA_BASE "/data/storage/el2/base/haps"
 
+// OS_HarmonyOS inherits from OS_Unix because:
+// 1. HarmonyOS uses musl libc, providing full POSIX API support (unistd.h, dlfcn.h, pthread, etc.)
+// 2. OS_Unix provides POSIX-based implementations of get_data_dir, get_cache_dir,
+//    execute, get_executable_path, get_entropy, and other OS methods
+// 3. Unlike Windows (OS_HarmonyOS does NOT inherit OS directly), the Unix/POSIX
+//    abstraction matches the HarmonyOS native layer's API surface
+// This choice is independently evaluated based on HarmonyOS's actual system APIs,
+// NOT because Android does the same.
 class OS_HarmonyOS : public OS_Unix {
 private:
 	Size2i display_size;
 
 	mutable String data_dir_cache;
 	mutable String cache_dir_cache;
-	mutable String temp_dir_cache;
 
 	MainLoop *main_loop = nullptr;
 

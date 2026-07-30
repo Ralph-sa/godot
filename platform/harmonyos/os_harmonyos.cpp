@@ -140,7 +140,7 @@ int OS_HarmonyOS::get_process_id() const {
 }
 
 bool OS_HarmonyOS::_check_internal_feature_support(const String &p_feature) {
-	if (p_feature == "mobile") {
+	if (p_feature == "pc") {
 		return true;
 	}
 	return false;
