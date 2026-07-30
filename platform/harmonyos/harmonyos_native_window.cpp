@@ -3,6 +3,7 @@
 /**************************************************************************/
 
 #include "harmonyos_native_window.h"
+#include "display_server_harmonyos.h"
 
 #ifdef HARMONYOS_ENABLED
 
@@ -51,6 +52,13 @@ void HarmonyOSNativeWindow::OnSurfaceCreated_CB(OH_NativeXComponent *component, 
 	if (ret == 0) {
 		singleton->width_ = w;
 		singleton->height_ = h;
+
+		// Forward dimensions to DisplayServer so window_size / rect_changed
+		// callbacks reflect the real surface geometry.
+		DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
+		if (ds) {
+			ds->update_window_size((int)w, (int)h);
+		}
 	}
 
 	singleton->surface_ready_ = true;
@@ -69,6 +77,12 @@ void HarmonyOSNativeWindow::OnSurfaceChanged_CB(OH_NativeXComponent *component, 
 	OH_NativeXComponent_GetXComponentSize(component, window, &w, &h);
 	singleton->width_ = w;
 	singleton->height_ = h;
+
+	// Forward size change to DisplayServer.
+	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
+	if (ds) {
+		ds->update_window_size((int)w, (int)h);
+	}
 
 	OH_LOG_INFO(LOG_APP, "Surface changed: %{public}llux%{public}llu",
 		(unsigned long long)w, (unsigned long long)h);

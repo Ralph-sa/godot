@@ -255,11 +255,11 @@ void DisplayServerHarmonyOS::window_set_current_screen(int p_screen, DisplayServ
 }
 
 Point2i DisplayServerHarmonyOS::window_get_position(DisplayServerEnums::WindowID p_window) const {
-	return Point2i();
+	return _window_position;
 }
 
 Point2i DisplayServerHarmonyOS::window_get_position_with_decorations(DisplayServerEnums::WindowID p_window) const {
-	return Point2i();
+	return _window_position;
 }
 
 void DisplayServerHarmonyOS::window_set_position(const Point2i &p_position, DisplayServerEnums::WindowID p_window) {
@@ -295,10 +295,20 @@ Size2i DisplayServerHarmonyOS::window_get_size_with_decorations(DisplayServerEnu
 }
 
 void DisplayServerHarmonyOS::window_set_mode(DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::WindowID p_window) {
+	_window_mode = p_mode;
+
+	// Notify ArkTS layer of window mode change.
+	// Fullscreen/windowed transitions in HarmonyOS are system-level
+	// operations handled through ArkTS Window API (setWindowSystemBarProperties, etc.).
+	// We use a weak symbol so linking succeeds without the NAPI bridge.
+	extern void harmonyos_notify_window_mode(int mode) __attribute__((weak));
+	if (harmonyos_notify_window_mode) {
+		harmonyos_notify_window_mode((int)p_mode);
+	}
 }
 
 DisplayServerEnums::WindowMode DisplayServerHarmonyOS::window_get_mode(DisplayServerEnums::WindowID p_window) const {
-	return DisplayServerEnums::WINDOW_MODE_WINDOWED;
+	return _window_mode;
 }
 
 bool DisplayServerHarmonyOS::window_is_maximize_allowed(DisplayServerEnums::WindowID p_window) const {
@@ -383,10 +393,7 @@ void DisplayServerHarmonyOS::swap_buffers() {
 }
 
 void DisplayServerHarmonyOS::notify_surface_changed(int p_width, int p_height) {
-	window_size = Size2i(p_width, p_height);
-	if (rect_changed_callback.is_valid()) {
-		rect_changed_callback.call(Rect2i(0, 0, p_width, p_height));
-	}
+	update_window_size(p_width, p_height);
 }
 
 void DisplayServerHarmonyOS::notify_surface_created() {
@@ -395,6 +402,16 @@ void DisplayServerHarmonyOS::notify_surface_created() {
 
 void DisplayServerHarmonyOS::notify_surface_destroyed() {
 	window_can_draw_val = false;
+}
+
+void DisplayServerHarmonyOS::update_window_size(int p_width, int p_height) {
+	window_size = Size2i(p_width, p_height);
+	_window_position = Point2i(0, 0);
+
+	// Fire the rect-changed callback so the engine knows the window was resized.
+	if (rect_changed_callback.is_valid()) {
+		rect_changed_callback.call(Rect2i(0, 0, p_width, p_height));
+	}
 }
 
 // ---- driver registration ----
@@ -489,6 +506,7 @@ DisplayServerHarmonyOS::DisplayServerHarmonyOS(const String &p_rendering_driver,
 	rendering_driver = p_rendering_driver;
 	window_size = p_resolution;
 	keep_screen_on = true;
+	_window_mode = p_mode;
 
 	if (p_rendering_driver != "vulkan") {
 		OH_LOG_ERROR(LOG_APP, "Unsupported rendering driver: %{public}s. Only 'vulkan' is supported.", p_rendering_driver.utf8().get_data());
@@ -501,6 +519,14 @@ DisplayServerHarmonyOS::DisplayServerHarmonyOS(const String &p_rendering_driver,
 	// Rendering context and device are initialized separately
 	// through check_vulkan_global_context() and reset_window()
 	// after the surface becomes available.
+
+	// Screen DPI and refresh rate default to 160 / 60.0f.
+	// OHOS Native XComponent API (OH_NativeXComponent) does not expose
+	// density/dpi information directly — those values are only accessible
+	// from the ArkTS side via @ohos.display.getDefaultDisplaySync().
+	// Set real values through a weak symbol so the ArkTS layer can
+	// notify us at startup before any rendering begins:
+	//   extern "C" void harmonyos_notify_display_info(int dpi, float scale, float refresh_rate);
 }
 
 DisplayServerHarmonyOS::~DisplayServerHarmonyOS() {

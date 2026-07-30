@@ -43,6 +43,8 @@ protected:
 	float screen_refresh_rate_val = 60.0f;
 	bool window_focused = true;
 	bool window_can_draw_val = false;
+	Point2i _window_position = Point2i(0, 0);
+	DisplayServerEnums::WindowMode _window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
 
 public:
 	static DisplayServerHarmonyOS *get_singleton();
@@ -133,6 +135,8 @@ public:
 	void notify_surface_changed(int p_width, int p_height);
 	void notify_surface_created();
 	void notify_surface_destroyed();
+
+	void update_window_size(int p_width, int p_height);
 
 	static DisplayServer *create_func(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, DisplayServerEnums::Context p_context, int64_t p_parent_window, Error &r_error);
 	static Vector<String> get_rendering_drivers_func();
