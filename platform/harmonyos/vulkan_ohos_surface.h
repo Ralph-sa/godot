@@ -8,18 +8,9 @@
 // when Godot's volk loader sets VK_NO_PROTOTYPES (which disables platform
 // extension prototypes from the system Vulkan headers).
 //
-// If the OHOS NDK provides these types via <vulkan/vulkan_ohos.h>, this
-// header should NOT be included to prevent redefinition conflicts.
-// All declarations are guarded with #ifndef to coexist with system headers.
-
-// Forward-declare OHNativeWindow.
-// The actual type is defined in <native_window/external_window.h> as:
-//   typedef struct OHNativeWindow OHNativeWindow;
-// We use a matching opaque forward declaration here.
-#ifndef OH_NATIVE_WINDOW_TYPEDEF
-#define OH_NATIVE_WINDOW_TYPEDEF
-typedef struct OHNativeWindow OHNativeWindow;
-#endif
+// The OHNativeWindow type is expected to already be defined by the OHOS SDK
+// headers (native_interface_xcomponent.h → external_window.h) before this
+// file is included. We do NOT redefine it to avoid type conflicts.
 
 #define VK_OHOS_SURFACE_SPEC_VERSION 1
 #define VK_OHOS_SURFACE_EXTENSION_NAME "VK_OHOS_surface"

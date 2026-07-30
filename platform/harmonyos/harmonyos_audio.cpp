@@ -57,10 +57,10 @@ static int32_t OnWriteData(OH_AudioRenderer *renderer, void *user_data,
 static int32_t OnStreamEvent(OH_AudioRenderer *renderer, void *user_data,
                               OH_AudioStream_Event event) {
     switch (event) {
-        case AUDIOSTREAM_EVENT_UNDERRUN:
+        case AUDIOSTREAM_EVENT_BUFFER_UNDERRUN:
             OH_LOG_WARN(LOG_APP, "OHAudio: Buffer underrun");
             break;
-        case AUDIOSTREAM_EVENT_OVERRUN:
+        case AUDIOSTREAM_EVENT_BUFFER_OVERRUN:
             OH_LOG_WARN(LOG_APP, "OHAudio: Buffer overrun");
             break;
         default:
@@ -154,12 +154,12 @@ bool init_audio() {
         return false;
     }
 
-    // Step 6: Get actual buffer size
-    uint32_t frame_size = 0;
-    OH_AudioRenderer_GetFrameSizeInCallback(g_renderer, &frame_size);
-    if (frame_size > 0) {
-        g_buffer_frames = static_cast<int32_t>(frame_size);
-    }
+	// Step 6: Get actual buffer size
+	int32_t frame_size = 0;
+	OH_AudioRenderer_GetFrameSizeInCallback(g_renderer, &frame_size);
+	if (frame_size > 0) {
+		g_buffer_frames = frame_size;
+	}
 
     g_initialized = true;
     OH_LOG_INFO(LOG_APP, "OHAudio: Audio driver initialized (buffer=%{public}d frames)",

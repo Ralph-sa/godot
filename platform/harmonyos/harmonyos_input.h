@@ -8,6 +8,8 @@
 
 namespace HarmonyOSInput {
 
+typedef enum ::Key Key;
+
 // Translate OHOS key code to Godot Key enum.
 Key ohos_key_to_godot(int ohos_keycode);
 

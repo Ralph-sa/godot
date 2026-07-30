@@ -32,7 +32,8 @@ static struct PlatformInit {
 int harmonyos_godot_init() {
 	OH_LOG_INFO(LOG_APP, "===== Godot Engine Initialization START =====");
 
-	if (g_engine_initialized) {
+	bool expected = false;
+	if (!g_engine_initialized.compare_exchange_strong(expected, true)) {
 		OH_LOG_WARN(LOG_APP, "Godot engine already initialized");
 		return 0;
 	}
@@ -41,13 +42,9 @@ int harmonyos_godot_init() {
 	g_native_window = new HarmonyOSNativeWindow();
 
 	// Create the OS instance (must exist before Main::setup())
-	// Note: OS_HarmonyOS is a singleton and Main::setup will use it
-	if (!OS_HarmonyOS::get_singleton() && !g_os_created) {
-		// Create OS instance via the proper Godot pattern
-		// OS_HarmonyOS will be created by Main::setup() if properly configured
-		// For now, ensure the singleton exists
+	if (!OS_HarmonyOS::get_singleton() && !g_os_created.load(std::memory_order_acquire)) {
 		OS_HarmonyOS *os = memnew(OS_HarmonyOS);
-		g_os_created = true;
+		g_os_created.store(true, std::memory_order_release);
 		OH_LOG_INFO(LOG_APP, "OS_HarmonyOS instance created");
 	}
 
@@ -72,7 +69,6 @@ int harmonyos_godot_init() {
 		OH_LOG_WARN(LOG_APP, "Main::setup returned error, continuing...");
 	}
 
-	g_engine_initialized = true;
 	OH_LOG_INFO(LOG_APP, "===== Godot Engine Initialization DONE =====");
 	return 0;
 }
@@ -143,20 +139,21 @@ int harmonyos_godot_surface_destroy() {
 void harmonyos_godot_cleanup() {
 	OH_LOG_INFO(LOG_APP, "===== Godot Engine Cleanup START =====");
 
-	if (g_engine_initialized) {
+	if (g_engine_initialized.exchange(false, std::memory_order_acq_rel)) {
 		Main::cleanup();
-		g_engine_initialized = false;
 	}
 
 	delete g_native_window;
 	g_native_window = nullptr;
+
+	g_surface_created.store(false, std::memory_order_release);
 
 	OH_LOG_INFO(LOG_APP, "===== Godot Engine Cleanup DONE =====");
 }
 
 void harmonyos_godot_on_pause() {
 	OH_LOG_INFO(LOG_APP, "Application paused");
-	if (!g_engine_initialized) return;
+	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 
 #if defined(VULKAN_ENABLED)
 	DisplayServerHarmonyOS::free_vulkan_global_context();
@@ -165,13 +162,17 @@ void harmonyos_godot_on_pause() {
 
 void harmonyos_godot_on_resume() {
 	OH_LOG_INFO(LOG_APP, "Application resumed");
-	if (!g_engine_initialized) return;
+	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 
 #if defined(VULKAN_ENABLED)
 	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
 	if (ds) {
-		ds->check_vulkan_global_context(true);
-		ds->reset_window();
+		bool vulkan_ok = ds->check_vulkan_global_context(true);
+		if (vulkan_ok) {
+			ds->reset_window();
+		} else {
+			OH_LOG_ERROR(LOG_APP, "Failed to reinitialize Vulkan context on resume");
+		}
 	}
 #endif
 }
@@ -190,22 +191,22 @@ void harmonyos_godot_terminate(int exit_code) {
 // ---- Input event forwarding ----
 
 void harmonyos_godot_key_event(int key_code, int event_type, const char *key_text) {
-	if (!g_engine_initialized) return;
+	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 	HarmonyOSInput::process_key_event(key_code, event_type, key_text);
 }
 
 void harmonyos_godot_mouse_event(int button, int action, double x, double y,
                                   double offset_x, double offset_y) {
-	if (!g_engine_initialized) return;
+	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 	HarmonyOSInput::process_mouse_event(button, action, x, y, offset_x, offset_y);
 }
 
 void harmonyos_godot_touch_event(int touch_id, int action, double x, double y) {
-	if (!g_engine_initialized) return;
+	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 	HarmonyOSInput::process_touch_event(touch_id, action, x, y);
 }
 
 void harmonyos_godot_input_text(const char *text) {
-	if (!g_engine_initialized) return;
+	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 	HarmonyOSInput::process_input_text(text);
 }

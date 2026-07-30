@@ -295,14 +295,8 @@ void process_mouse_event(int button, int action, double x, double y,
 		motion_event->set_position(Vector2(x, y));
 		motion_event->set_relative(Vector2(offset_x, offset_y));
 
-		MouseButtonMask mask;
-		if (meta_pressed) mask.set_flag(MouseButtonMask::LEFT);
-		if (shift_pressed) mask.set_flag(MouseButtonMask::MIDDLE);
-		if (ctrl_pressed) mask.set_flag(MouseButtonMask::RIGHT);
-		// Default: report left + middle + right
-		if (mask == MouseButtonMask(0)) {
-			mask = MouseButtonMask(MouseButtonMask::LEFT | MouseButtonMask::MIDDLE | MouseButtonMask::RIGHT);
-		}
+		MouseButtonMask mask = MouseButtonMask(
+			MouseButtonMask::LEFT | MouseButtonMask::MIDDLE | MouseButtonMask::RIGHT);
 		motion_event->set_button_mask(mask);
 
 		Input::get_singleton()->parse_input_event(motion_event);

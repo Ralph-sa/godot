@@ -15,7 +15,7 @@
 #endif
 
 #ifdef HARMONYOS_ENABLED
-#include <pasteboard/pasteboard.h>
+#include <hilog/log.h>
 #endif
 
 #include <atomic>
@@ -51,58 +51,22 @@ String DisplayServerHarmonyOS::get_name() const {
 }
 
 // ---- clipboard ----
+//
+// NOTE: OHOS pasteboard (<pasteboard/pasteboard.h>) may not be available
+// in all NDK versions. The current implementation stores text in a static
+// buffer. The real OH_Pasteboard integration should be added when the
+// pasteboard NDK API is available (API 20+ with pasteboard SDK component).
+//
+// See: https://developer.huawei.com/consumer/en/doc/harmonyos-references/pasteboard
+
+static String g_clipboard_text;
 
 void DisplayServerHarmonyOS::clipboard_set(const String &p_text) {
-#ifdef HARMONYOS_ENABLED
-	OH_PasteboardInfo *system_board = OH_PasteboardInfo_Create();
-	if (!system_board) {
-		OH_LOG_ERROR(LOG_APP, "Clipboard: Failed to create pasteboard");
-		return;
-	}
-
-	PasteData *data = OH_PasteData_Create();
-	if (!data) {
-		OH_PasteboardInfo_Destroy(system_board);
-		return;
-	}
-
-	CharString utf8 = p_text.utf8();
-	OH_PasteData_SetPlainText(data, utf8.get_data(), utf8.length());
-	// Use addEntry for the actual set operation
-	OH_PasteboardInfo_AddEntry(system_board, data);
-	// Release the paste data (pasteboard now owns it)
-
-	OH_PasteboardInfo_Destroy(system_board);
-#endif
+	g_clipboard_text = p_text;
 }
 
 String DisplayServerHarmonyOS::clipboard_get() const {
-#ifdef HARMONYOS_ENABLED
-	OH_PasteboardInfo *system_board = OH_PasteboardInfo_Create();
-	if (!system_board) {
-		return String();
-	}
-
-	// Retrieve the latest paste entry
-	PasteData *data = OH_PasteboardInfo_GetEntry(system_board, 0);
-	if (!data) {
-		OH_PasteboardInfo_Destroy(system_board);
-		return String();
-	}
-
-	char *text = nullptr;
-	uint32_t len = 0;
-	int32_t ret = OH_PasteData_GetPlainText(data, &text, &len);
-	if (ret == 0 && text != nullptr && len > 0) {
-		String result = String::utf8(text, (int)len);
-		free(text);
-		OH_PasteboardInfo_Destroy(system_board);
-		return result;
-	}
-
-	OH_PasteboardInfo_Destroy(system_board);
-#endif
-	return String();
+	return g_clipboard_text;
 }
 
 // ---- screen ----
