@@ -7,6 +7,7 @@
 #include "display_server_harmonyos.h"
 #include "os_harmonyos.h"
 #include "harmonyos_input.h"
+#include "crash_handler_harmonyos.h"
 
 #include "main/main.h"
 
@@ -22,6 +23,7 @@
 #define HARMONYOS_EXPORT_FN __attribute__((visibility("default")))
 
 static HarmonyOSNativeWindow *g_native_window = nullptr;
+static CrashHandlerHarmonyOS *g_crash_handler = nullptr;
 static std::atomic<bool> g_engine_initialized(false);
 static std::atomic<bool> g_os_created(false);
 static std::atomic<bool> g_surface_created(false);
@@ -42,6 +44,10 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 		OH_LOG_WARN(LOG_APP, "Godot engine already initialized");
 		return 0;
 	}
+
+	// Initialize crash handler early, before any engine setup.
+	g_crash_handler = new CrashHandlerHarmonyOS();
+	g_crash_handler->initialize();
 
 	// Create native window manager
 	g_native_window = new HarmonyOSNativeWindow();
@@ -138,6 +144,9 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_cleanup() {
 
 	delete g_native_window;
 	g_native_window = nullptr;
+
+	delete g_crash_handler;
+	g_crash_handler = nullptr;
 
 	g_surface_created.store(false, std::memory_order_release);
 

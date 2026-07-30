@@ -3,6 +3,7 @@
 /**************************************************************************/
 
 #include "os_harmonyos.h"
+#include "joypad_harmonyos.h"
 
 #include "core/config/engine.h"
 #include "core/io/dir_access.h"
@@ -75,11 +76,20 @@ void OS_HarmonyOS::initialize() {
 }
 
 void OS_HarmonyOS::initialize_joypads() {
-	// Joystick support can be added later via OHOS input API
+	joypad_harmonyos = memnew(JoypadHarmonyOS());
+	if (joypad_harmonyos->initialize() != OK) {
+		ERR_PRINT("Could not initialize HarmonyOS joypad input driver.");
+		memdelete(joypad_harmonyos);
+		joypad_harmonyos = nullptr;
+	}
 }
 
 void OS_HarmonyOS::finalize() {
 	// Cleanup before engine shutdown
+	if (joypad_harmonyos) {
+		memdelete(joypad_harmonyos);
+		joypad_harmonyos = nullptr;
+	}
 #ifdef HARMONYOS_ENABLED
 	OH_LOG_INFO(LOG_APP, "OS_HarmonyOS::finalize()");
 #endif
@@ -154,6 +164,9 @@ void OS_HarmonyOS::run() {
 	main_loop->initialize();
 
 	while (true) {
+		if (joypad_harmonyos) {
+			joypad_harmonyos->process_events();
+		}
 		if (Main::iteration()) {
 			break;
 		}

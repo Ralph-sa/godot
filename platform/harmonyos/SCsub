@@ -9,6 +9,8 @@ harmonyos_files = [
     "harmonyos_native_window.cpp",
     "harmonyos_input.cpp",
     "harmonyos_audio.cpp",
+    "joypad_harmonyos.cpp",
+    "crash_handler_harmonyos.cpp",
     "rendering_context_driver_vulkan_harmonyos.cpp",
 ]
 

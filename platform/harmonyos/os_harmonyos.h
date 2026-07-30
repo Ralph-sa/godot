@@ -7,6 +7,8 @@
 #include "core/os/main_loop.h"
 #include "drivers/unix/os_unix.h"
 
+class JoypadHarmonyOS;
+
 // HarmonyOS sandbox path components.
 // These match the module name in build-profile.json5 and module.json5.
 // If the module name changes, update these defines accordingly.
@@ -29,6 +31,7 @@ private:
 	mutable String cache_dir_cache;
 
 	MainLoop *main_loop = nullptr;
+	JoypadHarmonyOS *joypad_harmonyos = nullptr;
 
 	virtual void delete_main_loop() override;
 
