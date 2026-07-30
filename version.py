@@ -1,9 +1,9 @@
 short_name = "godot"
-name = "Godot Engine"
+name = "Godot Engine (HarmonyOS Port)"
 major = 4
 minor = 8
 patch = 0
-status = "dev"
+status = "harmonyos"
 module_config = ""
-website = "https://godotengine.org"
+website = "https://github.com/Ralph-sa/godot"
 docs = "latest"

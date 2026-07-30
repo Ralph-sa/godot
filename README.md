@@ -1,4 +1,19 @@
-# Godot Engine
+# Godot Engine — HarmonyOS Port
+
+> **这是 Godot Engine 的鸿蒙（HarmonyOS）移植版本。**
+>
+> 本分支（`harmonyos`）基于 Godot Engine 主线代码，新增了对华为 HarmonyOS（OpenHarmony）平台的原生支持，使 Godot 游戏可以导出并运行在鸿蒙设备上。
+>
+> | 项目 | 详情 |
+> |---|---|
+> | 上游项目 | [godotengine/godot](https://github.com/godotengine/godot) |
+> | 移植仓库 | [Ralph-sa/godot](https://github.com/Ralph-sa/godot) |
+> | 移植分支 | `harmonyos` |
+> | 移植开发者 | 多罗 (`1e77df51-b19d-48e5-8849-ca551f09ed5b`) |
+>
+> ---
+> 以下为 Godot Engine 原始 README 内容。
+> ---
 
 <p align="center">
   <a href="https://godotengine.org">
@@ -13,7 +28,7 @@ game engine to create 2D and 3D games from a unified interface.** It provides a
 comprehensive set of [common tools](https://godotengine.org/features), so that
 users can focus on making games without having to reinvent the wheel. Games can
 be exported with one click to a number of platforms, including the major desktop
-platforms (Linux, macOS, Windows), mobile platforms (Android, iOS), as well as
+platforms (Linux, macOS, Windows), mobile platforms (Android, iOS), **HarmonyOS (via this port)**, as well as
 Web-based platforms and [consoles](https://godotengine.org/consoles).
 
 ## Free, open source and community-driven
