@@ -153,6 +153,14 @@ bool OS_HarmonyOS::_check_internal_feature_support(const String &p_feature) {
 	if (p_feature == "pc") {
 		return true;
 	}
+	if (p_feature == "system_fonts") {
+		// HarmonyOS 使用 musl libc，具备链接 fontconfig 的可能性。
+		// OHOS NDK 默认不包含 fontconfig 的 dev 包，但运行时系统镜像中
+		// 通常已预置 fontconfig 库（/system/lib64/libfontconfig.so）。
+		// 当前暂返回 true 声明能力；如运行时检测到 fontconfig 不可用，
+		// 需在 OS_Unix::get_system_fonts() 中降级为空列表。
+		return true;
+	}
 	return false;
 }
 

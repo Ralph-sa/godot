@@ -7,6 +7,7 @@
 #include "servers/display/display_server.h"
 
 class InputEvent;
+class TTS_HarmonyOS;
 
 #ifdef VULKAN_ENABLED
 class RenderingContextDriverVulkanHarmonyOS;
@@ -45,6 +46,7 @@ protected:
 	bool window_can_draw_val = false;
 	Point2i _window_position = Point2i(0, 0);
 	DisplayServerEnums::WindowMode _window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
+	TTS_HarmonyOS *tts = nullptr;
 
 public:
 	static DisplayServerHarmonyOS *get_singleton();

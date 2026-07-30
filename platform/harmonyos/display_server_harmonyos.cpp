@@ -6,6 +6,7 @@
 
 #include "harmonyos_native_window.h"
 #include "os_harmonyos.h"
+#include "tts_harmonyos.h"
 
 #include "core/config/project_settings.h"
 #include "core/input/input.h"
@@ -39,6 +40,10 @@ bool DisplayServerHarmonyOS::has_feature(DisplayServerEnums::Feature p_feature) 
 		case DisplayServerEnums::FEATURE_MOUSE:
 		case DisplayServerEnums::FEATURE_TOUCHSCREEN:
 			return true;
+		// OHOS NDK 当前无 TTS API，FEATURE_TEXT_TO_SPEECH 暂返回 false。
+		// 当 HarmonyOS SDK 提供原生 TTS 接口后，可激活此 feature。
+		case DisplayServerEnums::FEATURE_TEXT_TO_SPEECH:
+			return false;
 		default:
 			return false;
 	}
@@ -124,6 +129,9 @@ String DisplayServerHarmonyOS::clipboard_get() const {
 // ---- screen ----
 
 int DisplayServerHarmonyOS::get_screen_count() const {
+	// XComponent API (OH_NativeXComponent) 不提供多屏信息查询接口，
+	// 因此固定返回 1。如需支持外接显示器等场景，需通过 ArkTS 侧
+	// @ohos.display.getDefaultDisplaySync() 获取屏幕列表并通过 NAPI 传递。
 	return 1;
 }
 
@@ -516,18 +524,25 @@ DisplayServerHarmonyOS::DisplayServerHarmonyOS(const String &p_rendering_driver,
 
 	r_error = OK;
 
+	// TTS framework stub — OHOS NDK 当前无 TTS API，预留框架供未来对接。
+	tts = memnew(TTS_HarmonyOS);
+
 	// Rendering context and device are initialized separately
 	// through check_vulkan_global_context() and reset_window()
 	// after the surface becomes available.
 
-	// Screen DPI and refresh rate default to 160 / 60.0f.
-	// OHOS Native XComponent API (OH_NativeXComponent) does not expose
-	// density/dpi information directly — those values are only accessible
-	// from the ArkTS side via @ohos.display.getDefaultDisplaySync().
-	// Set real values through a weak symbol so the ArkTS layer can
-	// notify us at startup before any rendering begins:
+	// Screen DPI 默认值 160（与 Godot 引擎基准 DPI 一致，即 mdpi 1:1 密度）。
+	// screen_refresh_rate_val 默认值 60.0f。
+	// OHOS Native XComponent API (OH_NativeXComponent) 不暴露 density/dpi/refresh_rate
+	// 信息 — 这些值仅可通过 ArkTS 侧的 @ohos.display.getDefaultDisplaySync() 获取。
+	// 升级路径：ArkTS 层在启动时通过 weak symbol 传递真实值：
 	//   extern "C" void harmonyos_notify_display_info(int dpi, float scale, float refresh_rate);
+	// 在回调中更新 screen_dpi_val / screen_scale_val / screen_refresh_rate_val。
 }
 
 DisplayServerHarmonyOS::~DisplayServerHarmonyOS() {
+	if (tts) {
+		memdelete(tts);
+		tts = nullptr;
+	}
 }
