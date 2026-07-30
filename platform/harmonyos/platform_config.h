@@ -30,9 +30,6 @@
 
 #pragma once
 
-#include <alloca.h>
-#include <malloc.h>
-
 #ifdef HARMONYOS_ENABLED
 #include <hilog/log.h>
 #endif

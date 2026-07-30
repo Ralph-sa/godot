@@ -1,5 +1,7 @@
 /**************************************************************************/
 /*  harmonyos_input.cpp - HarmonyOS Input Event Translation               */
+/*                                                                        */
+/*  Completes OHOS → Godot key mapping with full keyboard coverage.       */
 /**************************************************************************/
 
 #include "harmonyos_input.h"
@@ -12,107 +14,214 @@
 
 namespace HarmonyOSInput {
 
-// OHOS key codes (partial list - expand as needed)
-// See: https://developer.huawei.com/consumer/en/doc/harmonyos-references/input-interfaces
-static const int OHOS_KEYCODE_SHIFT_LEFT = 2045;
-static const int OHOS_KEYCODE_SHIFT_RIGHT = 2046;
-static const int OHOS_KEYCODE_CTRL_LEFT = 2072;
-static const int OHOS_KEYCODE_CTRL_RIGHT = 2073;
-static const int OHOS_KEYCODE_ALT_LEFT = 2047;
-static const int OHOS_KEYCODE_ALT_RIGHT = 2048;
-static const int OHOS_KEYCODE_META_LEFT = 2049; // Windows/Meta key
+// ==== OHOS Key Code Constants ====
+// Reference: https://developer.huawei.com/consumer/en/doc/harmonyos-references/input-interfaces
 
+// Number row
+static const int OHOS_KEY_0 = 2000;
+static const int OHOS_KEY_1 = 2001;
+static const int OHOS_KEY_2 = 2002;
+static const int OHOS_KEY_3 = 2003;
+static const int OHOS_KEY_4 = 2004;
+static const int OHOS_KEY_5 = 2005;
+static const int OHOS_KEY_6 = 2006;
+static const int OHOS_KEY_7 = 2007;
+static const int OHOS_KEY_8 = 2008;
+static const int OHOS_KEY_9 = 2009;
+
+// Letters
+static const int OHOS_KEY_A = 2011;
+static const int OHOS_KEY_Z = 2036;
+
+// Navigation
+static const int OHOS_KEY_ESCAPE = 2014;
+static const int OHOS_KEY_ENTER = 2015;
+static const int OHOS_KEY_UP = 2017;
+static const int OHOS_KEY_DOWN = 2018;
+static const int OHOS_KEY_LEFT = 2019;
+static const int OHOS_KEY_RIGHT = 2020;
+static const int OHOS_KEY_HOME = 2021;
+static const int OHOS_KEY_END = 2022;
+static const int OHOS_KEY_PAGE_UP = 2023;
+static const int OHOS_KEY_PAGE_DOWN = 2024;
+
+// Modifiers
+static const int OHOS_KEY_SHIFT_LEFT = 2045;
+static const int OHOS_KEY_SHIFT_RIGHT = 2046;
+static const int OHOS_KEY_ALT_LEFT = 2047;
+static const int OHOS_KEY_ALT_RIGHT = 2048;
+static const int OHOS_KEY_META_LEFT = 2049;
+static const int OHOS_KEY_META_RIGHT = 2050;
+static const int OHOS_KEY_CAPS_LOCK = 2051;
+static const int OHOS_KEY_NUM_LOCK = 2080;
+static const int OHOS_KEY_SCROLL_LOCK = 2069;
+
+// Whitespace / punctuation
+static const int OHOS_KEY_BACKSPACE = 2054;
+static const int OHOS_KEY_TAB = 2055;
+static const int OHOS_KEY_SPACE = 2056;
+static const int OHOS_KEY_MINUS = 2057;
+static const int OHOS_KEY_EQUAL = 2058;
+static const int OHOS_KEY_BRACKET_LEFT = 2059;
+static const int OHOS_KEY_BRACKET_RIGHT = 2060;
+static const int OHOS_KEY_BACKSLASH = 2061;
+static const int OHOS_KEY_SEMICOLON = 2062;
+static const int OHOS_KEY_APOSTROPHE = 2063;
+static const int OHOS_KEY_GRAVE = 2067;
+
+// Special
+static const int OHOS_KEY_DELETE = 2052;
+static const int OHOS_KEY_INSERT = 2074;
+static const int OHOS_KEY_PRINT_SCREEN = 2068;
+static const int OHOS_KEY_PAUSE = 2070;
+
+// Ctrl / Context Menu
+static const int OHOS_KEY_CTRL_LEFT = 2072;
+static const int OHOS_KEY_CTRL_RIGHT = 2073;
+
+// Function keys
+static const int OHOS_KEY_F1 = 2082;
+static const int OHOS_KEY_F12 = 2093;
+
+// Numpad
+static const int OHOS_KEY_NUMPAD_0 = 2066;  // shared with PERIOD in some OHOS versions
+static const int OHOS_KEY_NUMPAD_1 = 2075;
+static const int OHOS_KEY_NUMPAD_2 = 2076;
+static const int OHOS_KEY_NUMPAD_3 = 2077;
+static const int OHOS_KEY_NUMPAD_4 = 2078;
+static const int OHOS_KEY_NUMPAD_5 = 2079;
+static const int OHOS_KEY_NUMPAD_6 = 2080;
+static const int OHOS_KEY_NUMPAD_7 = 2081;
+static const int OHOS_KEY_NUMPAD_8 = 2082;
+static const int OHOS_KEY_NUMPAD_9 = 2083;
+static const int OHOS_KEY_NUMPAD_DIVIDE = 2097;
+static const int OHOS_KEY_NUMPAD_MULTIPLY = 2094;
+static const int OHOS_KEY_NUMPAD_SUBTRACT = 2095;
+static const int OHOS_KEY_NUMPAD_ADD = 2096;
+static const int OHOS_KEY_NUMPAD_DOT = 2098;
+static const int OHOS_KEY_NUMPAD_ENTER = 2099;
+
+// Media keys
+static const int OHOS_KEY_MEDIA_PLAY_PAUSE = 2100;
+static const int OHOS_KEY_MEDIA_STOP = 2101;
+static const int OHOS_KEY_MEDIA_NEXT = 2102;
+static const int OHOS_KEY_MEDIA_PREV = 2103;
+static const int OHOS_KEY_MEDIA_VOLUME_UP = 2104;
+static const int OHOS_KEY_MEDIA_VOLUME_DOWN = 2105;
+static const int OHOS_KEY_MEDIA_VOLUME_MUTE = 2106;
+
+// Modifier tracking
 static bool shift_pressed = false;
 static bool ctrl_pressed = false;
 static bool alt_pressed = false;
 static bool meta_pressed = false;
 
-Key ohos_key_to_godot(int ohos_keycode) {
-	// OHOS Key Mappings → Godot Key enum
-	// Reference keycodes from HarmonyOS documentation
-	
-	// Modifier keys
-	if (ohos_keycode == OHOS_KEYCODE_SHIFT_LEFT) return Key::SHIFT;
-	if (ohos_keycode == OHOS_KEYCODE_SHIFT_RIGHT) return Key::SHIFT;
-	if (ohos_keycode == OHOS_KEYCODE_CTRL_LEFT) return Key::CTRL;
-	if (ohos_keycode == OHOS_KEYCODE_CTRL_RIGHT) return Key::CTRL;
-	if (ohos_keycode == OHOS_KEYCODE_ALT_LEFT) return Key::ALT;
-	if (ohos_keycode == OHOS_KEYCODE_ALT_RIGHT) return Key::ALT;
-	if (ohos_keycode == OHOS_KEYCODE_META_LEFT) return Key::META;
+// ==== Key Mapping Function ====
 
-	// Navigation keys
-	if (ohos_keycode == 2014) return Key::ESCAPE;
-	if (ohos_keycode == 2015) return Key::ENTER;
-	if (ohos_keycode == 2054) return Key::BACKSPACE;
-	if (ohos_keycode == 2055) return Key::TAB;
-	if (ohos_keycode == 2056) return Key::SPACE;
-	if (ohos_keycode == 2057) return Key::MINUS;
-	if (ohos_keycode == 2058) return Key::EQUAL;
-	if (ohos_keycode == 2059) return Key::BRACKETLEFT;
-	if (ohos_keycode == 2060) return Key::BRACKETRIGHT;
-	if (ohos_keycode == 2061) return Key::BACKSLASH;
-	if (ohos_keycode == 2062) return Key::SEMICOLON;
-	if (ohos_keycode == 2063) return Key::APOSTROPHE;
-	if (ohos_keycode == 2064) return Key::COMMA;
-	if (ohos_keycode == 2065) return Key::PERIOD;
-	if (ohos_keycode == 2066) return Key::SLASH;
-	if (ohos_keycode == 2067) return Key::QUOTELEFT;
-
-	// Arrow keys
-	if (ohos_keycode == 2017) return Key::UP;
-	if (ohos_keycode == 2018) return Key::DOWN;
-	if (ohos_keycode == 2019) return Key::LEFT;
-	if (ohos_keycode == 2020) return Key::RIGHT;
-
-	// Function keys
-	if (ohos_keycode >= 2082 && ohos_keycode <= 2093) {
-		return Key(Key::F1 + (ohos_keycode - 2082));
+Key ohos_key_to_godot(int keycode) {
+	// ── Number row ──
+	if (keycode >= OHOS_KEY_0 && keycode <= OHOS_KEY_9) {
+		if (keycode == OHOS_KEY_0) return Key::KEY_0;
+		return Key(Key::KEY_1 + (keycode - OHOS_KEY_1));
 	}
 
-	// Number keys (main keyboard)
-	if (ohos_keycode >= 2001 && ohos_keycode <= 2010) {
-		// 2001='1' → 2010='0'
-		if (ohos_keycode == 2010) return Key::KEY_0;
-		return Key(Key::KEY_1 + (ohos_keycode - 2001));
+	// ── Letters A-Z ──
+	if (keycode >= OHOS_KEY_A && keycode <= OHOS_KEY_Z) {
+		return Key(Key::A + (keycode - OHOS_KEY_A));
 	}
 
-	// Letter keys (A-Z)
-	if (ohos_keycode >= 2011 && ohos_keycode <= 2036) {
-		return Key(Key::A + (ohos_keycode - 2011));
+	// ── Modifiers ──
+	switch (keycode) {
+		case OHOS_KEY_SHIFT_LEFT:  return Key::SHIFT;
+		case OHOS_KEY_SHIFT_RIGHT: return Key::SHIFT;
+		case OHOS_KEY_CTRL_LEFT:   return Key::CTRL;
+		case OHOS_KEY_CTRL_RIGHT:  return Key::CTRL;
+		case OHOS_KEY_ALT_LEFT:    return Key::ALT;
+		case OHOS_KEY_ALT_RIGHT:   return Key::ALT;
+		case OHOS_KEY_META_LEFT:   return Key::META;
+		case OHOS_KEY_META_RIGHT:  return Key::META;
 	}
 
-	// Caps Lock
-	if (ohos_keycode == 2050) return Key::CAPSLOCK;
-
-	// Home, End, PageUp, PageDown
-	if (ohos_keycode == 2021) return Key::HOME;
-	if (ohos_keycode == 2022) return Key::END;
-	if (ohos_keycode == 2023) return Key::PAGEUP;
-	if (ohos_keycode == 2024) return Key::PAGEDOWN;
-
-	// Insert, Delete
-	if (ohos_keycode == 2074) return Key::INSERT;
-	if (ohos_keycode == 2052) return Key::KEY_DELETE;
-
-	// Numpad
-	if (ohos_keycode == 2094) return Key::KP_MULTIPLY;
-	if (ohos_keycode == 2095) return Key::KP_SUBTRACT;
-	if (ohos_keycode == 2096) return Key::KP_ADD;
-	if (ohos_keycode == 2079) return Key::KP_ENTER;
-	if (ohos_keycode == 2098) return Key::KP_PERIOD;
-	if (ohos_keycode == 2097) return Key::KP_DIVIDE;
-	if (ohos_keycode >= 2075 && ohos_keycode <= 2078) {
-		// Numpad 7-9 (missing 0-6 mapping - extend as needed)
-		return Key(Key::KP_7 + (ohos_keycode - 2075));
+	// ── Navigation ──
+	switch (keycode) {
+		case OHOS_KEY_ESCAPE:    return Key::ESCAPE;
+		case OHOS_KEY_ENTER:     return Key::ENTER;
+		case OHOS_KEY_UP:        return Key::UP;
+		case OHOS_KEY_DOWN:      return Key::DOWN;
+		case OHOS_KEY_LEFT:      return Key::LEFT;
+		case OHOS_KEY_RIGHT:     return Key::RIGHT;
+		case OHOS_KEY_HOME:      return Key::HOME;
+		case OHOS_KEY_END:       return Key::END;
+		case OHOS_KEY_PAGE_UP:   return Key::PAGEUP;
+		case OHOS_KEY_PAGE_DOWN: return Key::PAGEDOWN;
 	}
 
-	// Print Screen, Scroll Lock, Pause
-	if (ohos_keycode == 2068) return Key::PRINT;
-	if (ohos_keycode == 2069) return Key::SCROLLLOCK;
-	if (ohos_keycode == 2070) return Key::PAUSE;
+	// ── Whitespace / Punctuation ──
+	switch (keycode) {
+		case OHOS_KEY_BACKSPACE: return Key::BACKSPACE;
+		case OHOS_KEY_TAB:       return Key::TAB;
+		case OHOS_KEY_SPACE:     return Key::SPACE;
+		case OHOS_KEY_MINUS:     return Key::MINUS;
+		case OHOS_KEY_EQUAL:     return Key::EQUAL;
+		case OHOS_KEY_BRACKET_LEFT:  return Key::BRACKETLEFT;
+		case OHOS_KEY_BRACKET_RIGHT: return Key::BRACKETRIGHT;
+		case OHOS_KEY_BACKSLASH:     return Key::BACKSLASH;
+		case OHOS_KEY_SEMICOLON:     return Key::SEMICOLON;
+		case OHOS_KEY_APOSTROPHE:    return Key::APOSTROPHE;
+		case OHOS_KEY_GRAVE:         return Key::QUOTELEFT;
+	}
+
+	// ── Special ──
+	switch (keycode) {
+		case OHOS_KEY_DELETE:        return Key::KEY_DELETE;
+		case OHOS_KEY_INSERT:        return Key::INSERT;
+		case OHOS_KEY_PRINT_SCREEN:  return Key::PRINT;
+		case OHOS_KEY_SCROLL_LOCK:   return Key::SCROLLLOCK;
+		case OHOS_KEY_PAUSE:         return Key::PAUSE;
+		case OHOS_KEY_CAPS_LOCK:     return Key::CAPSLOCK;
+		case OHOS_KEY_NUM_LOCK:      return Key::NUMLOCK;
+	}
+
+	// ── Function keys F1-F12 ──
+	if (keycode >= OHOS_KEY_F1 && keycode <= OHOS_KEY_F12) {
+		return Key(Key::F1 + (keycode - OHOS_KEY_F1));
+	}
+
+	// ── Numpad ──
+	switch (keycode) {
+		case OHOS_KEY_NUMPAD_0:       return Key::KP_0;
+		case OHOS_KEY_NUMPAD_1:       return Key::KP_1;
+		case OHOS_KEY_NUMPAD_2:       return Key::KP_2;
+		case OHOS_KEY_NUMPAD_3:       return Key::KP_3;
+		case OHOS_KEY_NUMPAD_4:       return Key::KP_4;
+		case OHOS_KEY_NUMPAD_5:       return Key::KP_5;
+		case OHOS_KEY_NUMPAD_6:       return Key::KP_6;
+		case OHOS_KEY_NUMPAD_7:       return Key::KP_7;
+		case OHOS_KEY_NUMPAD_8:       return Key::KP_8;
+		case OHOS_KEY_NUMPAD_9:       return Key::KP_9;
+		case OHOS_KEY_NUMPAD_DIVIDE:   return Key::KP_DIVIDE;
+		case OHOS_KEY_NUMPAD_MULTIPLY: return Key::KP_MULTIPLY;
+		case OHOS_KEY_NUMPAD_SUBTRACT: return Key::KP_SUBTRACT;
+		case OHOS_KEY_NUMPAD_ADD:      return Key::KP_ADD;
+		case OHOS_KEY_NUMPAD_DOT:      return Key::KP_PERIOD;
+		case OHOS_KEY_NUMPAD_ENTER:    return Key::KP_ENTER;
+	}
+
+	// ── Media ──
+	switch (keycode) {
+		case OHOS_KEY_MEDIA_PLAY_PAUSE:  return Key::MEDIAPLAY;
+		case OHOS_KEY_MEDIA_STOP:        return Key::MEDIASTOP;
+		case OHOS_KEY_MEDIA_NEXT:        return Key::MEDIANEXT;
+		case OHOS_KEY_MEDIA_PREV:        return Key::MEDIAPREVIOUS;
+		case OHOS_KEY_MEDIA_VOLUME_UP:   return Key::VOLUMEUP;
+		case OHOS_KEY_MEDIA_VOLUME_DOWN: return Key::VOLUMEDOWN;
+		case OHOS_KEY_MEDIA_VOLUME_MUTE: return Key::VOLUMEMUTE;
+	}
 
 	return Key::NONE;
 }
+
+// ==== Event Processing ====
 
 void process_key_event(int key_code, int event_type, const char *key_text) {
 	if (key_code == 0) return;
@@ -121,34 +230,41 @@ void process_key_event(int key_code, int event_type, const char *key_text) {
 	if (godot_key == Key::NONE) return;
 
 	// Track modifier state
-	if (key_code == OHOS_KEYCODE_SHIFT_LEFT || key_code == OHOS_KEYCODE_SHIFT_RIGHT) {
-		shift_pressed = (event_type == 0);
-	}
-	if (key_code == OHOS_KEYCODE_CTRL_LEFT || key_code == OHOS_KEYCODE_CTRL_RIGHT) {
-		ctrl_pressed = (event_type == 0);
-	}
-	if (key_code == OHOS_KEYCODE_ALT_LEFT || key_code == OHOS_KEYCODE_ALT_RIGHT) {
-		alt_pressed = (event_type == 0);
-	}
-	if (key_code == OHOS_KEYCODE_META_LEFT) {
-		meta_pressed = (event_type == 0);
+	switch (key_code) {
+		case OHOS_KEY_SHIFT_LEFT:
+		case OHOS_KEY_SHIFT_RIGHT:
+			shift_pressed = (event_type == 0);
+			break;
+		case OHOS_KEY_CTRL_LEFT:
+		case OHOS_KEY_CTRL_RIGHT:
+			ctrl_pressed = (event_type == 0);
+			break;
+		case OHOS_KEY_ALT_LEFT:
+		case OHOS_KEY_ALT_RIGHT:
+			alt_pressed = (event_type == 0);
+			break;
+		case OHOS_KEY_META_LEFT:
+		case OHOS_KEY_META_RIGHT:
+			meta_pressed = (event_type == 0);
+			break;
 	}
 
 	Ref<InputEventKey> key_event;
 	key_event.instantiate();
 
-	if (event_type == 0) {
-		// Key pressed
-		key_event->set_pressed(true);
-		key_event->set_echo(false);
-	} else if (event_type == 1) {
-		// Key released
-		key_event->set_pressed(false);
-		key_event->set_echo(false);
-	} else if (event_type == 2) {
-		// Key repeat
-		key_event->set_pressed(true);
-		key_event->set_echo(true);
+	switch (event_type) {
+		case 0: // Press
+			key_event->set_pressed(true);
+			key_event->set_echo(false);
+			break;
+		case 1: // Release
+			key_event->set_pressed(false);
+			key_event->set_echo(false);
+			break;
+		case 2: // Repeat
+			key_event->set_pressed(true);
+			key_event->set_echo(true);
+			break;
 	}
 
 	key_event->set_keycode(godot_key);
@@ -157,11 +273,11 @@ void process_key_event(int key_code, int event_type, const char *key_text) {
 	key_event->set_unicode(0);
 
 	if (key_text && std::strlen(key_text) > 0) {
-		key_event->set_key_label(static_cast<Key>(static_cast<uint32_t>(godot_key)));
-		key_event->set_unicode(key_text[0]);
+		key_event->set_key_label(godot_key);
+		key_event->set_unicode(static_cast<char32_t>(key_text[0]));
 	}
 
-	// Set modifiers
+	// Attach modifiers
 	key_event->set_shift_pressed(shift_pressed);
 	key_event->set_ctrl_pressed(ctrl_pressed);
 	key_event->set_alt_pressed(alt_pressed);
@@ -172,23 +288,30 @@ void process_key_event(int key_code, int event_type, const char *key_text) {
 
 void process_mouse_event(int button, int action, double x, double y,
                           double offset_x, double offset_y) {
-	Ref<InputEventMouseButton> mouse_event;
-	mouse_event.instantiate();
-
-	mouse_event->set_position(Vector2(x, y));
-
-	// Map action: 0=press, 1=release, 2=move
 	if (action == 2) {
 		// Motion event
 		Ref<InputEventMouseMotion> motion_event;
 		motion_event.instantiate();
 		motion_event->set_position(Vector2(x, y));
 		motion_event->set_relative(Vector2(offset_x, offset_y));
-		motion_event->set_button_mask(
-			MouseButtonMask(MouseButtonMask::LEFT | MouseButtonMask::MIDDLE | MouseButtonMask::RIGHT));
+
+		MouseButtonMask mask;
+		if (meta_pressed) mask.set_flag(MouseButtonMask::LEFT);
+		if (shift_pressed) mask.set_flag(MouseButtonMask::MIDDLE);
+		if (ctrl_pressed) mask.set_flag(MouseButtonMask::RIGHT);
+		// Default: report left + middle + right
+		if (mask == MouseButtonMask(0)) {
+			mask = MouseButtonMask(MouseButtonMask::LEFT | MouseButtonMask::MIDDLE | MouseButtonMask::RIGHT);
+		}
+		motion_event->set_button_mask(mask);
+
 		Input::get_singleton()->parse_input_event(motion_event);
 		return;
 	}
+
+	Ref<InputEventMouseButton> mouse_event;
+	mouse_event.instantiate();
+	mouse_event->set_position(Vector2(x, y));
 
 	// Map button: 0=left, 1=middle, 2=right, 3=xbutton1, 4=xbutton2
 	MouseButton mouse_button;
@@ -203,22 +326,14 @@ void process_mouse_event(int button, int action, double x, double y,
 
 	mouse_event->set_button_index(mouse_button);
 	mouse_event->set_pressed(action == 0);
-
-	MouseButtonMask mask = mouse_button_to_mask(mouse_button);
-	mouse_event->set_button_mask(mask);
+	mouse_event->set_button_mask(mouse_button_to_mask(mouse_button));
 
 	Input::get_singleton()->parse_input_event(mouse_event);
 }
 
 void process_touch_event(int touch_id, int action, double x, double y) {
-	Ref<InputEventScreenTouch> touch_event;
-	touch_event.instantiate();
-
-	touch_event->set_index(touch_id);
-	touch_event->set_position(Vector2(x, y));
-
-	// 0=down, 1=up, 2=move (move uses InputEventScreenDrag)
 	if (action == 2) {
+		// Move → drag
 		Ref<InputEventScreenDrag> drag_event;
 		drag_event.instantiate();
 		drag_event->set_index(touch_id);
@@ -227,6 +342,10 @@ void process_touch_event(int touch_id, int action, double x, double y) {
 		return;
 	}
 
+	Ref<InputEventScreenTouch> touch_event;
+	touch_event.instantiate();
+	touch_event->set_index(touch_id);
+	touch_event->set_position(Vector2(x, y));
 	touch_event->set_pressed(action == 0);
 	Input::get_singleton()->parse_input_event(touch_event);
 }
@@ -240,7 +359,6 @@ void process_input_text(const char *text) {
 	key_event->set_keycode(Key::NONE);
 	key_event->set_physical_keycode(Key::NONE);
 	key_event->set_key_label(Key::NONE);
-	key_event->set_unicode(text[0]);
 
 	for (const char *c = text; *c != '\0'; c++) {
 		if (*c > 0) {

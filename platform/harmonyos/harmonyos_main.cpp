@@ -14,10 +14,12 @@
 #include <string>
 #include <cstdlib>
 #include <vector>
+#include <atomic>
 
 static HarmonyOSNativeWindow *g_native_window = nullptr;
-static bool g_engine_initialized = false;
-static bool g_os_created = false;
+static std::atomic<bool> g_engine_initialized(false);
+static std::atomic<bool> g_os_created(false);
+static std::atomic<bool> g_surface_created(false);
 
 // ---- Static initialization: register platform drivers at load time ----
 static struct PlatformInit {
@@ -83,9 +85,21 @@ int harmonyos_godot_surface_created(const char *surface_id) {
 		return -1;
 	}
 
+	// Prevent double-initialization from dual callback paths
+	// (NAPI bridge + XComponent native callback may both fire)
+	bool expected = false;
+	if (!g_surface_created.compare_exchange_strong(expected, true)) {
+		OH_LOG_WARN(LOG_APP, "Surface already created, skipping duplicate callback");
+		return 0;
+	}
+
+	// The XComponent native callback (OnSurfaceCreated_CB in HarmonyOSNativeWindow)
+	// handles setting up the OHNativeWindow pointer. The NAPI bridge path
+	// (this function) triggers display server setup once the surface is ready.
 	if (!g_native_window->initialize_with_xcomponent(nullptr)) {
-		// XComponent will be obtained from callback system
-		// The surface ID is used to track the XComponent
+		// If XComponent is not available via the native bridge path,
+		// it will be set up by the HarmonyOSNativeWindow callback instead.
+		OH_LOG_INFO(LOG_APP, "XComponent not set via NAPI bridge, waiting for native callback");
 	}
 
 	// Notify DisplayServer that surface is ready
@@ -93,8 +107,15 @@ int harmonyos_godot_surface_created(const char *surface_id) {
 	if (ds) {
 		ds->notify_surface_created();
 
-		// Reset window with the new surface
-		ds->reset_window();
+		// Ensure Vulkan global context is initialized before resetting the window.
+		// Without this, reset_window() will silently skip Vulkan window creation
+		// because rendering_context_global is still nullptr.
+		bool vulkan_ok = ds->check_vulkan_global_context(true);
+		if (vulkan_ok) {
+			ds->reset_window();
+		} else {
+			OH_LOG_ERROR(LOG_APP, "Vulkan context initialization failed, cannot create window");
+		}
 	} else {
 		OH_LOG_WARN(LOG_APP, "DisplayServer not ready for surface reset");
 	}
@@ -113,6 +134,8 @@ int harmonyos_godot_surface_destroy() {
 	if (g_native_window) {
 		g_native_window->destroy();
 	}
+
+	g_surface_created.store(false, std::memory_order_release);
 
 	return 0;
 }

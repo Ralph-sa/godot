@@ -7,6 +7,14 @@
 #include "core/os/main_loop.h"
 #include "drivers/unix/os_unix.h"
 
+// HarmonyOS sandbox path components.
+// These match the module name in build-profile.json5 and module.json5.
+// If the module name changes, update these defines accordingly.
+#ifndef OHOS_MODULE_NAME
+#define OHOS_MODULE_NAME "entry"
+#endif
+#define OHOS_DATA_BASE "/data/storage/el2/base/haps"
+
 class OS_HarmonyOS : public OS_Unix {
 private:
 	Size2i display_size;

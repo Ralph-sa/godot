@@ -28,8 +28,8 @@ String OS_HarmonyOS::get_user_data_dir(const String &p_user_dir) const {
 	if (!p_user_dir.is_empty()) {
 		data_dir_cache = p_user_dir;
 	} else {
-		// OHOS sandbox path for user data
-		data_dir_cache = "/data/storage/el2/base/haps/entry/files";
+		// OHOS sandbox path for user data — uses module name from os_harmonyos.h
+		data_dir_cache = String(OHOS_DATA_BASE) + "/" + OHOS_MODULE_NAME + "/files";
 	}
 	return data_dir_cache;
 }
@@ -39,7 +39,7 @@ String OS_HarmonyOS::get_cache_path() const {
 		return cache_dir_cache;
 	}
 
-	cache_dir_cache = "/data/storage/el2/base/haps/entry/cache";
+	cache_dir_cache = String(OHOS_DATA_BASE) + "/" + OHOS_MODULE_NAME + "/cache";
 	return cache_dir_cache;
 }
 
@@ -123,7 +123,7 @@ bool OS_HarmonyOS::is_userfs_persistent() const {
 }
 
 String OS_HarmonyOS::get_executable_path() const {
-	return "/data/storage/el2/base/haps/entry";
+	return String(OHOS_DATA_BASE) + "/" + OHOS_MODULE_NAME;
 }
 
 Error OS_HarmonyOS::execute(const String &p_path, const List<String> &p_arguments, String *r_pipe, int *r_exitcode, bool read_stderr, Mutex *p_pipe_mutex, bool p_open_console) {

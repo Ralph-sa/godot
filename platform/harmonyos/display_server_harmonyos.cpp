@@ -14,8 +14,14 @@
 #include "rendering_context_driver_vulkan_harmonyos.h"
 #endif
 
-static RenderingContextDriver *rendering_context_global = nullptr;
-static bool rendering_context_global_checked = false;
+#ifdef HARMONYOS_ENABLED
+#include <pasteboard/pasteboard.h>
+#endif
+
+#include <atomic>
+
+static std::atomic<RenderingContextDriver *> rendering_context_global(nullptr);
+static std::atomic<bool> rendering_context_global_checked(false);
 
 DisplayServerHarmonyOS *DisplayServerHarmonyOS::get_singleton() {
 	return static_cast<DisplayServerHarmonyOS *>(DisplayServer::get_singleton());
@@ -47,10 +53,55 @@ String DisplayServerHarmonyOS::get_name() const {
 // ---- clipboard ----
 
 void DisplayServerHarmonyOS::clipboard_set(const String &p_text) {
-	// Stub: OH pasteboard service (Phase 5)
+#ifdef HARMONYOS_ENABLED
+	OH_PasteboardInfo *system_board = OH_PasteboardInfo_Create();
+	if (!system_board) {
+		OH_LOG_ERROR(LOG_APP, "Clipboard: Failed to create pasteboard");
+		return;
+	}
+
+	PasteData *data = OH_PasteData_Create();
+	if (!data) {
+		OH_PasteboardInfo_Destroy(system_board);
+		return;
+	}
+
+	CharString utf8 = p_text.utf8();
+	OH_PasteData_SetPlainText(data, utf8.get_data(), utf8.length());
+	// Use addEntry for the actual set operation
+	OH_PasteboardInfo_AddEntry(system_board, data);
+	// Release the paste data (pasteboard now owns it)
+
+	OH_PasteboardInfo_Destroy(system_board);
+#endif
 }
 
 String DisplayServerHarmonyOS::clipboard_get() const {
+#ifdef HARMONYOS_ENABLED
+	OH_PasteboardInfo *system_board = OH_PasteboardInfo_Create();
+	if (!system_board) {
+		return String();
+	}
+
+	// Retrieve the latest paste entry
+	PasteData *data = OH_PasteboardInfo_GetEntry(system_board, 0);
+	if (!data) {
+		OH_PasteboardInfo_Destroy(system_board);
+		return String();
+	}
+
+	char *text = nullptr;
+	uint32_t len = 0;
+	int32_t ret = OH_PasteData_GetPlainText(data, &text, &len);
+	if (ret == 0 && text != nullptr && len > 0) {
+		String result = String::utf8(text, (int)len);
+		free(text);
+		OH_PasteboardInfo_Destroy(system_board);
+		return result;
+	}
+
+	OH_PasteboardInfo_Destroy(system_board);
+#endif
 	return String();
 }
 
@@ -170,7 +221,9 @@ ObjectID DisplayServerHarmonyOS::window_get_attached_instance_id(DisplayServerEn
 }
 
 void DisplayServerHarmonyOS::window_set_title(const String &p_title, DisplayServerEnums::WindowID p_window) {
-	// NAPI call to ArkTS (Phase 5)
+	// Forward title change to ArkTS via NAPI callback
+	extern void harmonyos_notify_window_title(const char *title);
+	harmonyos_notify_window_title(p_title.utf8().get_data());
 }
 
 int DisplayServerHarmonyOS::window_get_current_screen(DisplayServerEnums::WindowID p_window) const {
@@ -260,6 +313,11 @@ bool DisplayServerHarmonyOS::can_any_window_draw() const {
 
 void DisplayServerHarmonyOS::process_events() {
 	Input::get_singleton()->flush_buffered_events();
+
+	// Forward pending window events to the engine.
+	// Window focus/resize events are delivered via ArkTS callbacks
+	// and translated through notify_surface_changed/created/destroyed.
+	// Additional system events (clipboard change, etc.) can be polled here.
 }
 
 // ---- cursor ----
@@ -346,39 +404,41 @@ void DisplayServerHarmonyOS::register_harmonyos_driver() {
 
 #ifdef VULKAN_ENABLED
 bool DisplayServerHarmonyOS::check_vulkan_global_context(bool p_vulkan_requirements_met) {
-	if (!rendering_context_global_checked) {
+	bool expected = false;
+	if (rendering_context_global_checked.compare_exchange_strong(expected, true)) {
 		Error err = ERR_CANT_CREATE;
 		if (p_vulkan_requirements_met) {
-			rendering_context_global = memnew(RenderingContextDriverVulkanHarmonyOS);
-			err = rendering_context_global->initialize();
+			RenderingContextDriver *ctx = memnew(RenderingContextDriverVulkanHarmonyOS);
+			err = ctx->initialize();
+			if (err == OK) {
+				rendering_context_global.store(ctx, std::memory_order_release);
+			} else {
+				memdelete(ctx);
+			}
 		}
 
 		if (err != OK) {
-			if (rendering_context_global != nullptr) {
-				memdelete(rendering_context_global);
-				rendering_context_global = nullptr;
-			}
+			rendering_context_global.store(nullptr, std::memory_order_release);
 			ERR_PRINT("Failed to initialize Vulkan context.");
 		}
-
-		rendering_context_global_checked = true;
 	}
 
-	return rendering_context_global != nullptr;
+	return rendering_context_global.load(std::memory_order_acquire) != nullptr;
 }
 
 void DisplayServerHarmonyOS::free_vulkan_global_context() {
-	if (rendering_context_global != nullptr) {
-		memdelete(rendering_context_global);
-		rendering_context_global = nullptr;
-		rendering_context_global_checked = false;
+	RenderingContextDriver *ctx = rendering_context_global.exchange(nullptr, std::memory_order_acq_rel);
+	if (ctx != nullptr) {
+		memdelete(ctx);
+		rendering_context_global_checked.store(false, std::memory_order_release);
 	}
 }
 
 void DisplayServerHarmonyOS::reset_window() {
-	if (rendering_context_global) {
-		DisplayServerEnums::VSyncMode last_vsync_mode = rendering_context_global->window_get_vsync_mode(window_id);
-		rendering_context_global->window_destroy(window_id);
+	RenderingContextDriver *ctx = rendering_context_global.load(std::memory_order_acquire);
+	if (ctx) {
+		DisplayServerEnums::VSyncMode last_vsync_mode = ctx->window_get_vsync_mode(window_id);
+		ctx->window_destroy(window_id);
 
 		HarmonyOSNativeWindow *native_win = HarmonyOSNativeWindow::singleton;
 		ERR_FAIL_NULL(native_win);
@@ -389,13 +449,15 @@ void DisplayServerHarmonyOS::reset_window() {
 		RenderingContextDriverVulkanHarmonyOS::WindowPlatformData wpd;
 		wpd.native_window = oh_window;
 
-		if (rendering_context_global->window_create(window_id, &wpd) != OK) {
+		if (ctx->window_create(window_id, &wpd) != OK) {
 			ERR_PRINT("Failed to reset Vulkan window.");
 			return;
 		}
 
-		rendering_context_global->window_set_size(window_id, window_size.width, window_size.height);
-		rendering_context_global->window_set_vsync_mode(window_id, last_vsync_mode);
+		ctx->window_set_size(window_id, window_size.width, window_size.height);
+		ctx->window_set_vsync_mode(window_id, last_vsync_mode);
+	} else {
+		OH_LOG_ERROR(LOG_APP, "reset_window: Vulkan context not initialized, cannot create window surface");
 	}
 }
 #endif // VULKAN_ENABLED
@@ -406,6 +468,13 @@ DisplayServerHarmonyOS::DisplayServerHarmonyOS(const String &p_rendering_driver,
 	rendering_driver = p_rendering_driver;
 	window_size = p_resolution;
 	keep_screen_on = true;
+
+	if (p_rendering_driver != "vulkan") {
+		OH_LOG_ERROR(LOG_APP, "Unsupported rendering driver: %{public}s. Only 'vulkan' is supported.", p_rendering_driver.utf8().get_data());
+		r_error = ERR_UNAVAILABLE;
+		return;
+	}
+
 	r_error = OK;
 
 	// Rendering context and device are initialized separately

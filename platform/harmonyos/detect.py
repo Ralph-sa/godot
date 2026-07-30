@@ -100,14 +100,6 @@ def configure(env: "SConsEnvironment"):
     if env["PLATFORM"] == "win32":
         env.use_windows_spawn_fix()
 
-    # Determine toolchain host platform
-    if sys.platform.startswith("linux"):
-        host_subpath = "linux-x86_64"
-    elif sys.platform.startswith("darwin"):
-        host_subpath = "darwin-x86_64"
-    elif sys.platform.startswith("win"):
-        host_subpath = "windows-x86_64"
-
     compiler_path = toolchain_path
 
     # Use clang.exe directly with --target flag, since the wrapper scripts

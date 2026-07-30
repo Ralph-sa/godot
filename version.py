@@ -1,4 +1,4 @@
-short_name = "godot"
+short_name = "godot-hos"
 name = "Godot Engine (HarmonyOS Port)"
 major = 4
 minor = 8
