@@ -17,7 +17,8 @@
 namespace HarmonyOSInput {
 
 // ==== OHOS Key Code Constants ====
-// Reference: https://developer.huawei.com/consumer/en/doc/harmonyos-references/input-interfaces
+// Reference (official): @ohos.multimodalInput.keyCode / oh_key_code.h
+//   https://gitee.com/openharmony/docs (apis-input-kit)
 
 // Number row — OHOS_KEY_0 and OHOS_KEY_9 serve as bounds for the range
 // mapping in ohos_key_to_godot(); intermediate values (1-8) are covered by
@@ -27,36 +28,36 @@ static const int OHOS_KEY_1 = 2001;
 static const int OHOS_KEY_9 = 2009;
 
 // Letters
-static const int OHOS_KEY_A = 2011;
-static const int OHOS_KEY_Z = 2036;
+static const int OHOS_KEY_A = 2017;
+static const int OHOS_KEY_Z = 2042;
 
 // Navigation
-static const int OHOS_KEY_ESCAPE = 2014;
-static const int OHOS_KEY_ENTER = 2015;
-static const int OHOS_KEY_UP = 2017;
-static const int OHOS_KEY_DOWN = 2018;
-static const int OHOS_KEY_LEFT = 2019;
-static const int OHOS_KEY_RIGHT = 2020;
-static const int OHOS_KEY_HOME = 2021;
-static const int OHOS_KEY_END = 2022;
-static const int OHOS_KEY_PAGE_UP = 2023;
-static const int OHOS_KEY_PAGE_DOWN = 2024;
+static const int OHOS_KEY_ESCAPE = 2070;
+static const int OHOS_KEY_ENTER = 2054;
+static const int OHOS_KEY_UP = 2012;  // DPAD_UP
+static const int OHOS_KEY_DOWN = 2013; // DPAD_DOWN
+static const int OHOS_KEY_LEFT = 2014; // DPAD_LEFT
+static const int OHOS_KEY_RIGHT = 2015; // DPAD_RIGHT
+static const int OHOS_KEY_HOME = 1;
+static const int OHOS_KEY_END = 2082; // MOVE_END
+static const int OHOS_KEY_PAGE_UP = 2068;
+static const int OHOS_KEY_PAGE_DOWN = 2069;
 
 // Modifiers
-static const int OHOS_KEY_SHIFT_LEFT = 2045;
-static const int OHOS_KEY_SHIFT_RIGHT = 2046;
-static const int OHOS_KEY_ALT_LEFT = 2047;
-static const int OHOS_KEY_ALT_RIGHT = 2048;
-static const int OHOS_KEY_META_LEFT = 2049;
-static const int OHOS_KEY_META_RIGHT = 2050;
-static const int OHOS_KEY_CAPS_LOCK = 2051;
-static const int OHOS_KEY_NUM_LOCK = 2080;
-static const int OHOS_KEY_SCROLL_LOCK = 2069;
+static const int OHOS_KEY_SHIFT_LEFT = 2047;
+static const int OHOS_KEY_SHIFT_RIGHT = 2048;
+static const int OHOS_KEY_ALT_LEFT = 2045;
+static const int OHOS_KEY_ALT_RIGHT = 2046;
+static const int OHOS_KEY_META_LEFT = 2076;
+static const int OHOS_KEY_META_RIGHT = 2077;
+static const int OHOS_KEY_CAPS_LOCK = 2074;
+static const int OHOS_KEY_NUM_LOCK = 2102;
+static const int OHOS_KEY_SCROLL_LOCK = 2075;
 
 // Whitespace / punctuation
-static const int OHOS_KEY_BACKSPACE = 2054;
-static const int OHOS_KEY_TAB = 2055;
-static const int OHOS_KEY_SPACE = 2056;
+static const int OHOS_KEY_BACKSPACE = 2055; // DEL
+static const int OHOS_KEY_TAB = 2049;
+static const int OHOS_KEY_SPACE = 2050;
 static const int OHOS_KEY_MINUS = 2057;
 static const int OHOS_KEY_EQUAL = 2058;
 static const int OHOS_KEY_BRACKET_LEFT = 2059;
@@ -64,48 +65,49 @@ static const int OHOS_KEY_BRACKET_RIGHT = 2060;
 static const int OHOS_KEY_BACKSLASH = 2061;
 static const int OHOS_KEY_SEMICOLON = 2062;
 static const int OHOS_KEY_APOSTROPHE = 2063;
-static const int OHOS_KEY_GRAVE = 2067;
+static const int OHOS_KEY_GRAVE = 2056;
 
 // Special
-static const int OHOS_KEY_DELETE = 2052;
-static const int OHOS_KEY_INSERT = 2074;
-static const int OHOS_KEY_PRINT_SCREEN = 2068;
-static const int OHOS_KEY_PAUSE = 2070;
+static const int OHOS_KEY_DELETE = 2071; // FORWARD_DEL
+static const int OHOS_KEY_INSERT = 2083;
+static const int OHOS_KEY_PRINT_SCREEN = 2079; // SYSRQ
+static const int OHOS_KEY_PAUSE = 2080; // BREAK
 
 // Ctrl / Context Menu
 static const int OHOS_KEY_CTRL_LEFT = 2072;
 static const int OHOS_KEY_CTRL_RIGHT = 2073;
 
-// Function keys
-static const int OHOS_KEY_F1 = 2082;
-static const int OHOS_KEY_F12 = 2093;
+// Function keys — official OHOS range: F1 (2090) .. F12 (2101)
+static const int OHOS_KEY_F1 = 2090;
+static const int OHOS_KEY_F12 = 2101;
 
-// Numpad
-static const int OHOS_KEY_NUMPAD_0 = 2066;  // shared with PERIOD in some OHOS versions
-static const int OHOS_KEY_NUMPAD_1 = 2075;
-static const int OHOS_KEY_NUMPAD_2 = 2076;
-static const int OHOS_KEY_NUMPAD_3 = 2077;
-static const int OHOS_KEY_NUMPAD_4 = 2078;
-static const int OHOS_KEY_NUMPAD_5 = 2079;
-static const int OHOS_KEY_NUMPAD_6 = 2080;
-static const int OHOS_KEY_NUMPAD_7 = 2081;
-static const int OHOS_KEY_NUMPAD_8 = 2082;
-static const int OHOS_KEY_NUMPAD_9 = 2083;
-static const int OHOS_KEY_NUMPAD_DIVIDE = 2097;
-static const int OHOS_KEY_NUMPAD_MULTIPLY = 2094;
-static const int OHOS_KEY_NUMPAD_SUBTRACT = 2095;
-static const int OHOS_KEY_NUMPAD_ADD = 2096;
-static const int OHOS_KEY_NUMPAD_DOT = 2098;
-static const int OHOS_KEY_NUMPAD_ENTER = 2099;
+// Numpad — values from official OHOS keycode spec (API 9+)
+// Range: KEYCODE_NUMPAD_0 (2103) .. KEYCODE_NUMPAD_ENTER (2119)
+static const int OHOS_KEY_NUMPAD_0 = 2103;
+static const int OHOS_KEY_NUMPAD_1 = 2104;
+static const int OHOS_KEY_NUMPAD_2 = 2105;
+static const int OHOS_KEY_NUMPAD_3 = 2106;
+static const int OHOS_KEY_NUMPAD_4 = 2107;
+static const int OHOS_KEY_NUMPAD_5 = 2108;
+static const int OHOS_KEY_NUMPAD_6 = 2109;
+static const int OHOS_KEY_NUMPAD_7 = 2110;
+static const int OHOS_KEY_NUMPAD_8 = 2111;
+static const int OHOS_KEY_NUMPAD_9 = 2112;
+static const int OHOS_KEY_NUMPAD_DIVIDE = 2113;
+static const int OHOS_KEY_NUMPAD_MULTIPLY = 2114;
+static const int OHOS_KEY_NUMPAD_SUBTRACT = 2115;
+static const int OHOS_KEY_NUMPAD_ADD = 2116;
+static const int OHOS_KEY_NUMPAD_DOT = 2117;
+static const int OHOS_KEY_NUMPAD_ENTER = 2119;
 
 // Media keys
-static const int OHOS_KEY_MEDIA_PLAY_PAUSE = 2100;
-static const int OHOS_KEY_MEDIA_STOP = 2101;
-static const int OHOS_KEY_MEDIA_NEXT = 2102;
-static const int OHOS_KEY_MEDIA_PREV = 2103;
-static const int OHOS_KEY_MEDIA_VOLUME_UP = 2104;
-static const int OHOS_KEY_MEDIA_VOLUME_DOWN = 2105;
-static const int OHOS_KEY_MEDIA_VOLUME_MUTE = 2106;
+static const int OHOS_KEY_MEDIA_PLAY_PAUSE = 10;
+static const int OHOS_KEY_MEDIA_STOP = 11;
+static const int OHOS_KEY_MEDIA_NEXT = 12;
+static const int OHOS_KEY_MEDIA_PREV = 13;
+static const int OHOS_KEY_MEDIA_VOLUME_UP = 16;
+static const int OHOS_KEY_MEDIA_VOLUME_DOWN = 17;
+static const int OHOS_KEY_MEDIA_VOLUME_MUTE = 22;
 
 // Modifier tracking
 static std::atomic<bool> shift_pressed(false);

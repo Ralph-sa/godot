@@ -78,7 +78,7 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 
 	// Step 14 — Godot full engine init (heaviest step)
 	OH_LOG_INFO(LOG_APP, "[INIT STEP 14/16] Main::setup START (heavy — engine full init)");
-	Error err = Main::setup(nullptr, 0, args.data());
+	Error err = Main::setup(nullptr, (int)args.size(), args.data());
 	if (err != OK) {
 		OH_LOG_ERROR(LOG_APP, "Main::setup failed with error: %{public}d", err);
 		OH_LOG_WARN(LOG_APP, "Main::setup returned error, continuing...");

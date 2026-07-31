@@ -51,6 +51,10 @@ export struct GodotSurface {
   // OHOS mouse events: onMouse on the XComponent.
   // button: MouseButton.Left=0, Right=1, Middle=2
   // action: MouseAction.Press=1, Release=2, Move=3
+  //
+  // OHOS button order differs from the C++ side (which expects
+  // 0=Left, 1=Middle, 2=Right). Convert OHOS Right(1)↔Middle(2)
+  // before forwarding.
   handleMouseEvent(event: MouseEvent): void {
     const x: number = event.x ?? 0;
     const y: number = event.y ?? 0;
@@ -59,7 +63,17 @@ export struct GodotSurface {
     this.lastMouseX = x;
     this.lastMouseY = y;
 
-    const button: number = event.button ?? 0;
+    // Map OHOS MouseButton → C++ expected order
+    //   OHOS: Left=0, Right=1, Middle=2
+    //   C++:  Left=0, Middle=1, Right=2
+    let rawButton: number = event.button ?? 0;
+    let button: number = rawButton;
+    if (rawButton === 1) {
+      button = 2; // Right → Middle
+    } else if (rawButton === 2) {
+      button = 1; // Middle → Right
+    }
+
     let action: number;
 
     switch (event.action) {
