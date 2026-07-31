@@ -54,7 +54,7 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 
 	// Create the OS instance (must exist before Main::setup())
 	if (!OS_HarmonyOS::get_singleton() && !g_os_created.load(std::memory_order_acquire)) {
-		OS_HarmonyOS *os = memnew(OS_HarmonyOS);
+		(void)memnew(OS_HarmonyOS);
 		g_os_created.store(true, std::memory_order_release);
 		OH_LOG_INFO(LOG_APP, "OS_HarmonyOS instance created");
 	}
@@ -63,7 +63,9 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 	std::vector<char *> args;
 	std::vector<std::string> arg_strings;
 	arg_strings.push_back("godot_harmonyos");
+#ifdef TOOLS_ENABLED
 	arg_strings.push_back("--editor");
+#endif
 	arg_strings.push_back("--rendering-driver");
 	arg_strings.push_back("vulkan");
 

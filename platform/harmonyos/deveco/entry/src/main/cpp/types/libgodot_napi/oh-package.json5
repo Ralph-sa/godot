@@ -1,0 +1,9 @@
+{
+  "name": "godot_napi",
+  "version": "1.0.0",
+  "description": "Godot Engine NAPI Bridge for HarmonyOS",
+  "main": "Index.d.ts",
+  "author": "Godot Engine Contributors",
+  "license": "MIT",
+  "dependencies": {}
+}

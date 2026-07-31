@@ -19,16 +19,11 @@ namespace HarmonyOSInput {
 // ==== OHOS Key Code Constants ====
 // Reference: https://developer.huawei.com/consumer/en/doc/harmonyos-references/input-interfaces
 
-// Number row
+// Number row — OHOS_KEY_0 and OHOS_KEY_9 serve as bounds for the range
+// mapping in ohos_key_to_godot(); intermediate values (1-8) are covered by
+// linear interpolation and do not need individual constants.
 static const int OHOS_KEY_0 = 2000;
 static const int OHOS_KEY_1 = 2001;
-static const int OHOS_KEY_2 = 2002;
-static const int OHOS_KEY_3 = 2003;
-static const int OHOS_KEY_4 = 2004;
-static const int OHOS_KEY_5 = 2005;
-static const int OHOS_KEY_6 = 2006;
-static const int OHOS_KEY_7 = 2007;
-static const int OHOS_KEY_8 = 2008;
 static const int OHOS_KEY_9 = 2009;
 
 // Letters

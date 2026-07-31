@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "Godot Editor for HarmonyOS",
+  "main": "",
+  "author": "",
+  "license": "MIT",
+  "dependencies": {}
+}

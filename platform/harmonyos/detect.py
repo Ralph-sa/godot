@@ -58,6 +58,16 @@ def configure(env: "SConsEnvironment"):
     supported_arches = ["arm64"]
     validate_arch(env["arch"], get_name(), supported_arches)
 
+    # ---- Editor build configuration ----
+    # When ohos_editor_build=True (default), force target=editor and inject
+    # TOOLS_ENABLED. SConstruct evaluates env.editor_build and TOOLS_ENABLED
+    # before detect.configure() runs (line 533 vs 701), so we must manually
+    # fix up both the target and the CPP define here.
+    if env.get("ohos_editor_build", False):
+        env["target"] = "editor"
+        env["editor_build"] = True
+        env.Append(CPPDEFINES=["TOOLS_ENABLED"])
+
     ohos_sdk = env["OHOS_SDK_HOME"]
 
     if not ohos_sdk:

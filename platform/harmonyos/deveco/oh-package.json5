@@ -1,0 +1,10 @@
+{
+  "modelVersion": "6.0.2",
+  "description": "Godot Editor for HarmonyOS",
+  "dependencies": {
+  },
+  "devDependencies": {
+    "@ohos/hvigor-ohos-plugin": "file:.hvigor_tools/hvigor-ohos-plugin",
+    "@ohos/hvigor": "file:.hvigor_tools/hvigor"
+  }
+}

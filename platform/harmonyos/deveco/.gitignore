@@ -1,0 +1,25 @@
+# Binary outputs
+entry/libs/arm64-v8a/libgodot.so
+
+# Build outputs
+.hvigor/outputs/
+.hvigor/cache/
+.hvigor/report/
+entry/build/
+entry/.cxx/
+
+# Node modules / hvigor tools
+node_modules/
+oh_modules/
+.hvigor_tools/
+
+# Local machine config
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

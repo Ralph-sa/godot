@@ -1,0 +1,6 @@
+{
+  "devDependencies": {
+    "@ohos/hvigor": "file:../../Program Files/Huawei/DevEco Studio/tools/hvigor/hvigor",
+    "@ohos/hvigor-ohos-plugin": "file:../../Program Files/Huawei/DevEco Studio/tools/hvigor/hvigor-ohos-plugin"
+  }
+}

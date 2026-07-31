@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "com.godotengine.editor",
+    "vendor": "godot",
+    "versionCode": 1000000,
+    "versionName": "4.8.0-dev",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name"
+  }
+}

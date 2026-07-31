@@ -1,0 +1,32 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Godot Engine Editor for HarmonyOS"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Godot Editor"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Godot Editor"
+    },
+    {
+      "name": "pasteboard_permission_reason",
+      "value": "Allow Godot to access clipboard for copy/paste operations"
+    },
+    {
+      "name": "internet_permission_reason",
+      "value": "Allow Godot to access network for asset library and updates"
+    },
+    {
+      "name": "storage_write_permission_reason",
+      "value": "Allow Godot to save project files and editor settings"
+    },
+    {
+      "name": "storage_read_permission_reason",
+      "value": "Allow Godot to open and import project files"
+    }
+  ]
+}
