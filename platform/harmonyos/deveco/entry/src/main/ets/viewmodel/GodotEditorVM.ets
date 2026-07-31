@@ -2,7 +2,8 @@
  * GodotEditorVM.ets - MVVM ViewModel for Godot Editor
  *
  * Manages engine lifecycle, application state, and NAPI calls.
- * Architecture: the engine receives the project path at init time.
+ * Engine init is asynchronous: dlopen runs on a worker thread,
+ * Main::setup runs on the main thread via callback.
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { godot_napi } from 'libgodot_napi.so';
@@ -19,27 +20,31 @@ export class GodotEditorVM {
   @Trace projectPath: string = '';
 
   /**
-   * Initialize the Godot engine with a project path.
-   * @param path Absolute path to the Godot project directory.
+   * Initialize the Godot engine asynchronously.
+   * The NAPI bridge loads libgodot.so on a worker thread, then calls
+   * back to the main thread for engine setup (Main::setup).
    */
   initEngine(path: string): void {
     this.projectPath = path;
-    this.statusMessage = 'Loading project...';
+    this.statusMessage = 'Loading engine...';
     this.isLoading = true;
 
-    hilog.info(DOMAIN, TAG, `Initializing Godot engine for project: ${path}`);
+    hilog.info(DOMAIN, TAG, `Starting async engine init for project: ${path}`);
+
     try {
-      let result: number = godot_napi.init();
-      if (result === 0) {
-        this.isEngineReady = true;
-        this.isLoading = false;
-        this.statusMessage = 'Engine ready';
-        hilog.info(DOMAIN, TAG, 'Engine initialized successfully');
-      } else {
-        this.isLoading = false;
-        this.statusMessage = `Engine init failed: ${result}`;
-        hilog.error(DOMAIN, TAG, `Engine init failed: ${result}`);
-      }
+      godot_napi.init((result: number) => {
+        hilog.info(DOMAIN, TAG, `Engine init callback: result=${result}`);
+        if (result === 0) {
+          this.isEngineReady = true;
+          this.isLoading = false;
+          this.statusMessage = 'Engine ready';
+          hilog.info(DOMAIN, TAG, 'Engine initialized successfully');
+        } else {
+          this.isLoading = false;
+          this.statusMessage = `Engine init failed: ${result}`;
+          hilog.error(DOMAIN, TAG, `Engine init callback error: ${result}`);
+        }
+      });
     } catch (e) {
       this.isLoading = false;
       this.statusMessage = 'Engine init error';
