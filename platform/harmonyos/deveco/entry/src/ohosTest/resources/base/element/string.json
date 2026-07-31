@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "test_module_desc",
+      "value": "Godot Editor Test Module"
+    },
+    {
+      "name": "test_ability_desc",
+      "value": "Hypium test ability for Godot Editor"
+    }
+  ]
+}
