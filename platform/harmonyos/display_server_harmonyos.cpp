@@ -5,6 +5,7 @@
 #include "display_server_harmonyos.h"
 
 #include "harmonyos_native_window.h"
+#include "harmonyos_input.h"
 #include "os_harmonyos.h"
 #include "tts_harmonyos.h"
 
@@ -377,7 +378,8 @@ Point2i DisplayServerHarmonyOS::mouse_get_position() const {
 }
 
 BitField<MouseButtonMask> DisplayServerHarmonyOS::mouse_get_button_state() const {
-	return MouseButtonMask(0);
+	// Tracked by the input layer on every press/release.
+	return HarmonyOSInput::get_mouse_button_mask();
 }
 
 void DisplayServerHarmonyOS::mouse_set_mode(DisplayServerEnums::MouseMode p_mode) {

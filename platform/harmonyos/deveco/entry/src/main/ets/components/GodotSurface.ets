@@ -149,9 +149,14 @@ export struct GodotSurface {
         .backgroundColor(Color.Black)
         .focusable(true)
         .focusOnTouch(true)
-        .onLoad(() => {
+        .onLoad((context?: object) => {
           hilog.info(DOMAIN, TAG, '[INIT STEP 16/16] XComponent onLoad: ' + this.surfaceId);
           try {
+            if (context) {
+              // Hand the native context to NAPI so it can resolve the
+              // OH_NativeXComponent handle and register surface callbacks.
+              godot_napi.initXComponent(context);
+            }
             godot_napi.onSurfaceCreated(this.surfaceId);
           } catch (e) {
             hilog.error(DOMAIN, TAG, 'NAPI surface created error: ' + e);

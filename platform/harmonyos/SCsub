@@ -11,6 +11,7 @@ harmonyos_files = [
     "harmonyos_native_window.cpp",
     "harmonyos_input.cpp",
     "harmonyos_audio.cpp",
+    "audio_driver_ohos.cpp",
     "joypad_harmonyos.cpp",
     "crash_handler_harmonyos.cpp",
     "tts_harmonyos.cpp",

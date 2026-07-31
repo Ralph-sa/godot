@@ -3,6 +3,7 @@
 /**************************************************************************/
 
 #include "os_harmonyos.h"
+#include "audio_driver_ohos.h"
 #include "dir_access_harmonyos.h"
 #include "file_access_harmonyos.h"
 #include "joypad_harmonyos.h"
@@ -11,6 +12,7 @@
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "main/main.h"
+#include "servers/audio/audio_driver.h"
 
 #include <dlfcn.h>
 #include <unistd.h>
@@ -89,6 +91,10 @@ void OS_HarmonyOS::initialize() {
 	// FileAccess and DirAccess implementations.
 	initialize_core();
 
+	// Register the OHAudio audio driver so AudioServer can pick it up.
+	// Mirrors OS_Windows::initialize() registering AudioDriverWASAPI.
+	AudioDriverManager::add_driver(&driver_ohos);
+
 #ifdef HARMONYOS_ENABLED
 	OH_LOG_INFO(LOG_APP, "OS_HarmonyOS::initialize()");
 #endif
@@ -100,6 +106,12 @@ void OS_HarmonyOS::initialize_joypads() {
 		ERR_PRINT("Could not initialize HarmonyOS joypad input driver.");
 		memdelete(joypad_harmonyos);
 		joypad_harmonyos = nullptr;
+	}
+}
+
+void OS_HarmonyOS::process_joypad_events() {
+	if (joypad_harmonyos) {
+		joypad_harmonyos->process_events();
 	}
 }
 

@@ -28,4 +28,7 @@ void process_touch_event(int touch_id, int action, double x, double y);
 // Process IME text input.
 void process_input_text(const char *text);
 
+// Current held mouse button bitmask (MouseButtonMask).
+MouseButtonMask get_mouse_button_mask();
+
 } // namespace HarmonyOSInput

@@ -10,6 +10,7 @@ extern "C" {
 
 // Engine lifecycle
 int harmonyos_godot_init();
+void harmonyos_godot_start();
 void harmonyos_godot_cleanup();
 
 // Surface lifecycle (called from NAPI bridge)

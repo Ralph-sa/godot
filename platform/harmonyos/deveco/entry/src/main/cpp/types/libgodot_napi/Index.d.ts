@@ -11,6 +11,11 @@ export const godot_napi: {
   /** Notify engine that rendering surface was created. */
   onSurfaceCreated: (surfaceId: string) => number;
 
+  /** Initialize the native XComponent from the onLoad context object.
+   * Must be called before onSurfaceCreated.
+   */
+  initXComponent: (context: object) => number;
+
   /** Notify engine that rendering surface was destroyed. */
   onSurfaceDestroy: () => number;
 

@@ -7,6 +7,7 @@
 
 #include <napi/native_api.h>
 #include <hilog/log.h>
+#include <ace/xcomponent/native_interface_xcomponent.h>
 #include <dlfcn.h>
 #include <pthread.h>
 #include <atomic>
@@ -15,6 +16,7 @@
 #define TAG "GodotNAPI"
 
 typedef int (*godot_init_t)();
+typedef void (*godot_start_t)();
 typedef void (*godot_cleanup_t)();
 typedef int (*godot_surface_created_t)(const char *);
 typedef int (*godot_surface_destroy_t)();
@@ -28,6 +30,7 @@ typedef void (*godot_on_back_press_t)();
 
 static void *g_libgodot = nullptr;
 static godot_init_t g_init_func = nullptr;
+static godot_start_t g_start_func = nullptr;
 static godot_cleanup_t g_cleanup_func = nullptr;
 static godot_surface_created_t g_surface_created_func = nullptr;
 static godot_surface_destroy_t g_surface_destroy_func = nullptr;
@@ -42,6 +45,11 @@ static godot_on_back_press_t g_on_back_press_func = nullptr;
 static napi_ref g_title_callback_ref = nullptr;
 static napi_env g_title_callback_env = nullptr;
 
+// The XComponent native handle captured from the ArkTS onLoad context via
+// OH_NativeXComponent_GetNativeXComponent. Consumed by libgodot.so through
+// harmonyos_get_xcomponent() (weak symbol in the engine).
+static OH_NativeXComponent *g_xcomponent = nullptr;
+
 // ---- Async init ----
 static std::atomic<int> g_init_status{-1};
 
@@ -55,6 +63,7 @@ static bool load_libgodot() {
 		return false;
 	}
 	g_init_func              = (godot_init_t)dlsym(g_libgodot, "harmonyos_godot_init");
+	g_start_func             = (godot_start_t)dlsym(g_libgodot, "harmonyos_godot_start");
 	g_cleanup_func           = (godot_cleanup_t)dlsym(g_libgodot, "harmonyos_godot_cleanup");
 	g_surface_created_func   = (godot_surface_created_t)dlsym(g_libgodot, "harmonyos_godot_surface_created");
 	g_surface_destroy_func   = (godot_surface_destroy_t)dlsym(g_libgodot, "harmonyos_godot_surface_destroy");
@@ -74,9 +83,19 @@ static void *init_worker(void *) {
 		g_init_status.store(-2);
 		return nullptr;
 	}
-	// harmonyos_godot_init on worker thread (avoids ANR on main)
+	// harmonyos_godot_init on worker thread (avoids ANR on main).
+	// Phase 1: engine core setup (Main::setup) — returns quickly so the
+	// ArkTS polling loop can switch to the GodotSurface page.
 	int status = g_init_func ? g_init_func() : -1;
 	g_init_status.store(status);
+
+	// Phase 2: main loop + frame loop, still on this engine thread.
+	// harmonyos_godot_start() waits for the XComponent surface, then calls
+	// Main::start() and iterates until cleanup. It returns only after the
+	// engine has fully shut down.
+	if (status == 0 && g_start_func) {
+		g_start_func();
+	}
 	return nullptr;
 }
 
@@ -117,6 +136,37 @@ static napi_value NAPI_OnSurfaceCreated(napi_env env, napi_callback_info info) {
 	napi_get_value_string_utf8(env, args[0], id, sizeof(id), &len);
 	int s = g_surface_created_func ? g_surface_created_func(id) : -1;
 	napi_value r; napi_create_int32(env, s, &r); return r;
+}
+
+// Called from ArkTS XComponent.onLoad with the native context object.
+// Captures the OH_NativeXComponent handle for the engine to register its
+// surface callbacks (OnSurfaceCreated etc.).
+static napi_value NAPI_InitXComponent(napi_env env, napi_callback_info info) {
+	size_t argc = 1; napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		napi_value r; napi_create_int32(env, -1, &r); return r;
+	}
+	napi_valuetype type;
+	napi_typeof(env, args[0], &type);
+	if (type != napi_object) {
+		napi_value r; napi_create_int32(env, -1, &r); return r;
+	}
+
+	OH_NativeXComponent *xcomponent = nullptr;
+	int32_t ret = OH_NativeXComponent_GetNativeXComponent(env, args[0], &xcomponent);
+	if (ret != 0 || xcomponent == nullptr) {
+		OH_LOG_ERROR(LOG_APP, "initXComponent: OH_NativeXComponent_GetNativeXComponent failed (%{public}d)", ret);
+		napi_value r; napi_create_int32(env, -1, &r); return r;
+	}
+
+	g_xcomponent = xcomponent;
+	OH_LOG_INFO(LOG_APP, "initXComponent: captured native XComponent");
+	napi_value r; napi_create_int32(env, 0, &r); return r;
+}
+
+extern "C" OH_NativeXComponent *harmonyos_get_xcomponent() {
+	return g_xcomponent;
 }
 
 static napi_value NAPI_OnSurfaceDestroy(napi_env env, napi_callback_info info) {
@@ -196,6 +246,7 @@ static napi_value GodotModuleInit(napi_env env, napi_value exports) {
 		{"startEngine", nullptr, NAPI_StartEngine, nullptr, nullptr, nullptr, napi_default, nullptr},
 		{"cleanup", nullptr, NAPI_Cleanup, nullptr, nullptr, nullptr, napi_default, nullptr},
 		{"onSurfaceCreated", nullptr, NAPI_OnSurfaceCreated, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"initXComponent", nullptr, NAPI_InitXComponent, nullptr, nullptr, nullptr, napi_default, nullptr},
 		{"onSurfaceDestroy", nullptr, NAPI_OnSurfaceDestroy, nullptr, nullptr, nullptr, napi_default, nullptr},
 		{"sendKeyEvent", nullptr, NAPI_SendKeyEvent, nullptr, nullptr, nullptr, napi_default, nullptr},
 		{"sendMouseEvent", nullptr, NAPI_SendMouseEvent, nullptr, nullptr, nullptr, napi_default, nullptr},

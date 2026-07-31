@@ -6,6 +6,7 @@
 
 #include "core/os/main_loop.h"
 #include "drivers/unix/os_unix.h"
+#include "audio_driver_ohos.h"
 
 class JoypadHarmonyOS;
 
@@ -32,6 +33,7 @@ private:
 
 	MainLoop *main_loop = nullptr;
 	JoypadHarmonyOS *joypad_harmonyos = nullptr;
+	AudioDriverOHAudio driver_ohos;
 
 	virtual void delete_main_loop() override;
 
@@ -48,6 +50,10 @@ public:
 	virtual void initialize_joypads() override;
 	virtual void finalize() override;
 	virtual void finalize_core() override;
+
+	// Processes pending joypad events. Called by the engine frame loop
+	// (previously invoked from OS_HarmonyOS::run()).
+	void process_joypad_events();
 
 	virtual void set_main_loop(MainLoop *p_main_loop) override;
 	virtual MainLoop *get_main_loop() const override;

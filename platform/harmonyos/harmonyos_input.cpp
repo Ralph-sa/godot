@@ -115,6 +115,15 @@ static std::atomic<bool> ctrl_pressed(false);
 static std::atomic<bool> alt_pressed(false);
 static std::atomic<bool> meta_pressed(false);
 
+// Current mouse button state (bitmask of MouseButtonMask).
+// Updated on press/release, read by DisplayServer::mouse_get_button_state()
+// and attached to motion events so the engine sees the real held buttons.
+static std::atomic<uint32_t> g_mouse_button_mask(0);
+
+MouseButtonMask get_mouse_button_mask() {
+	return MouseButtonMask(g_mouse_button_mask.load(std::memory_order_acquire));
+}
+
 // ==== Key Mapping Function ====
 
 Key ohos_key_to_godot(int keycode) {
@@ -272,8 +281,14 @@ void process_key_event(int key_code, int event_type, const char *key_text) {
 	key_event->set_unicode(0);
 
 	if (key_text && std::strlen(key_text) > 0) {
-		key_event->set_key_label(godot_key);
-		key_event->set_unicode(static_cast<char32_t>(key_text[0]));
+		// key_text is UTF-8 encoded; decode with Godot's String so multi-byte
+		// characters (CJK, accents) are not truncated to their first byte.
+		String decoded = String::utf8(key_text);
+		if (decoded.length() > 0) {
+			char32_t unicode = decoded.unicode_at(0);
+			key_event->set_key_label(Key(unicode));
+			key_event->set_unicode(unicode);
+		}
 	}
 
 	// Attach modifiers
@@ -294,17 +309,12 @@ void process_mouse_event(int button, int action, double x, double y,
 		motion_event->set_position(Vector2(x, y));
 		motion_event->set_relative(Vector2(offset_x, offset_y));
 
-		MouseButtonMask mask = MouseButtonMask(
-			MouseButtonMask::LEFT | MouseButtonMask::MIDDLE | MouseButtonMask::RIGHT);
-		motion_event->set_button_mask(mask);
+		// Attach the real held-button mask instead of a hardcoded all-buttons mask.
+		motion_event->set_button_mask(get_mouse_button_mask());
 
 		Input::get_singleton()->parse_input_event(motion_event);
 		return;
 	}
-
-	Ref<InputEventMouseButton> mouse_event;
-	mouse_event.instantiate();
-	mouse_event->set_position(Vector2(x, y));
 
 	// Map button: 0=left, 1=middle, 2=right, 3=xbutton1, 4=xbutton2
 	MouseButton mouse_button;
@@ -317,9 +327,20 @@ void process_mouse_event(int button, int action, double x, double y,
 		default: mouse_button = MouseButton::LEFT; break;
 	}
 
+	// Keep the button state in sync for motion events and DisplayServer queries.
+	uint32_t mask_bit = (uint32_t)mouse_button_to_mask(mouse_button);
+	if (action == 0) {
+		g_mouse_button_mask.fetch_or(mask_bit, std::memory_order_acq_rel);
+	} else {
+		g_mouse_button_mask.fetch_and(~mask_bit, std::memory_order_acq_rel);
+	}
+
+	Ref<InputEventMouseButton> mouse_event;
+	mouse_event.instantiate();
+	mouse_event->set_position(Vector2(x, y));
 	mouse_event->set_button_index(mouse_button);
 	mouse_event->set_pressed(action == 0);
-	mouse_event->set_button_mask(mouse_button_to_mask(mouse_button));
+	mouse_event->set_button_mask(get_mouse_button_mask());
 
 	Input::get_singleton()->parse_input_event(mouse_event);
 }
@@ -351,6 +372,15 @@ void process_input_text(const char *text) {
 		ds->ime_text(String::utf8(text));
 	}
 
+	// Decode the whole UTF-8 string and forward every character as a
+	// unicode key event. Iterating raw bytes would drop multi-byte
+	// characters (e.g. CJK IME output), since UTF-8 continuation bytes
+	// are negative when viewed as signed char.
+	String decoded = String::utf8(text);
+	if (decoded.is_empty()) {
+		return;
+	}
+
 	Ref<InputEventKey> key_event;
 	key_event.instantiate();
 	key_event->set_pressed(true);
@@ -358,11 +388,11 @@ void process_input_text(const char *text) {
 	key_event->set_physical_keycode(Key::NONE);
 	key_event->set_key_label(Key::NONE);
 
-	for (const char *c = text; *c != '\0'; c++) {
-		if (*c > 0) {
-			key_event->set_unicode(static_cast<char32_t>(*c));
-			Input::get_singleton()->parse_input_event(key_event);
-		}
+	for (int i = 0; i < decoded.length(); i++) {
+		char32_t unicode = decoded.unicode_at(i);
+		key_event->set_key_label(Key(unicode));
+		key_event->set_unicode(unicode);
+		Input::get_singleton()->parse_input_event(key_event);
 	}
 }
 
