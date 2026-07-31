@@ -27,23 +27,25 @@ export class GodotEditorVM {
     this.statusMessage = 'Loading project...';
     this.isLoading = true;
 
-    hilog.info(DOMAIN, TAG, `Initializing Godot engine for project: ${path}`);
+    hilog.info(DOMAIN, TAG, '[INIT STEP 4/16] initEngine called, project: ' + path);
     try {
+      hilog.info(DOMAIN, TAG, '[INIT STEP 5/16] calling godot_napi.init() — synchronous, blocks main thread');
       let result: number = godot_napi.init();
+      hilog.info(DOMAIN, TAG, '[INIT STEP 15/16] godot_napi.init returned: ' + result);
       if (result === 0) {
         this.isEngineReady = true;
         this.isLoading = false;
         this.statusMessage = 'Engine ready';
-        hilog.info(DOMAIN, TAG, 'Engine initialized successfully');
+        hilog.info(DOMAIN, TAG, '[INIT STEP 15/16] Engine OK — switching to GodotSurface');
       } else {
         this.isLoading = false;
-        this.statusMessage = `Engine init failed: ${result}`;
-        hilog.error(DOMAIN, TAG, `Engine init failed: ${result}`);
+        this.statusMessage = 'Engine init failed: ' + result;
+        hilog.error(DOMAIN, TAG, '[INIT STEP 15/16] Engine FAILED: ' + result);
       }
     } catch (e) {
       this.isLoading = false;
       this.statusMessage = 'Engine init error';
-      hilog.error(DOMAIN, TAG, `NAPI init error: ${e}`);
+      hilog.error(DOMAIN, TAG, '[INIT STEP 5/16] NAPI init EXCEPTION: ' + e);
     }
   }
 
@@ -54,7 +56,7 @@ export class GodotEditorVM {
       this.isEngineReady = false;
       this.surfaceCreated = false;
     } catch (e) {
-      hilog.error(DOMAIN, TAG, `NAPI cleanup error: ${e}`);
+      hilog.error(DOMAIN, TAG, 'NAPI cleanup error: ' + e);
     }
   }
 
@@ -63,7 +65,7 @@ export class GodotEditorVM {
     try {
       godot_napi.onPause();
     } catch (e) {
-      hilog.error(DOMAIN, TAG, `NAPI pause error: ${e}`);
+      hilog.error(DOMAIN, TAG, 'NAPI pause error: ' + e);
     }
   }
 
@@ -72,7 +74,7 @@ export class GodotEditorVM {
     try {
       godot_napi.onResume();
     } catch (e) {
-      hilog.error(DOMAIN, TAG, `NAPI resume error: ${e}`);
+      hilog.error(DOMAIN, TAG, 'NAPI resume error: ' + e);
     }
   }
 }

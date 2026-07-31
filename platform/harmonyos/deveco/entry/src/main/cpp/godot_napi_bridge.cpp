@@ -46,51 +46,57 @@ static napi_env g_title_callback_env = nullptr;
 static bool load_libgodot() {
 	if (g_libgodot) return true;
 
-	OH_LOG_INFO(LOG_APP, "Loading libgodot.so...");
-	
-	// Try loading from the HAP's native library path
+	// Step 7 — dlopen the heavy SO
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 7/16] dlopen libgodot.so START (151MB — may take seconds)");
+
 	g_libgodot = dlopen("libgodot.so", RTLD_NOW | RTLD_GLOBAL);
-	
+
 	if (!g_libgodot) {
-		// Try alternative paths
 		g_libgodot = dlopen("libgodot.harmonyos.editor.arm64.so", RTLD_NOW | RTLD_GLOBAL);
 	}
-	
+
 	if (!g_libgodot) {
 		const char *err = dlerror();
-		OH_LOG_ERROR(LOG_APP, "Failed to load libgodot.so: %{public}s", err ? err : "unknown");
+		OH_LOG_ERROR(LOG_APP, "[INIT STEP 7/16] FAILED: %{public}s", err ? err : "unknown");
 		return false;
 	}
-	
-	// Resolve function pointers
-	g_init_func = (godot_init_t)dlsym(g_libgodot, "harmonyos_godot_init");
-	g_cleanup_func = (godot_cleanup_t)dlsym(g_libgodot, "harmonyos_godot_cleanup");
-	g_surface_created_func = (godot_surface_created_t)dlsym(g_libgodot, "harmonyos_godot_surface_created");
-	g_surface_destroy_func = (godot_surface_destroy_t)dlsym(g_libgodot, "harmonyos_godot_surface_destroy");
-	g_key_event_func = (godot_key_event_t)dlsym(g_libgodot, "harmonyos_godot_key_event");
-	g_mouse_event_func = (godot_mouse_event_t)dlsym(g_libgodot, "harmonyos_godot_mouse_event");
-	g_touch_event_func = (godot_touch_event_t)dlsym(g_libgodot, "harmonyos_godot_touch_event");
-	g_input_text_func = (godot_input_text_t)dlsym(g_libgodot, "harmonyos_godot_input_text");
-	g_on_pause_func = (godot_on_pause_t)dlsym(g_libgodot, "harmonyos_godot_on_pause");
-	g_on_resume_func = (godot_on_resume_t)dlsym(g_libgodot, "harmonyos_godot_on_resume");
-	g_on_back_press_func = (godot_on_back_press_t)dlsym(g_libgodot, "harmonyos_godot_on_back_press");
-	
-	OH_LOG_INFO(LOG_APP, "libgodot.so loaded successfully");
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 7/16] dlopen DONE");
+
+	// Step 8 — Resolve all 11 function pointers
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 8/16] dlsym function pointers");
+	g_init_func              = (godot_init_t)dlsym(g_libgodot, "harmonyos_godot_init");
+	g_cleanup_func           = (godot_cleanup_t)dlsym(g_libgodot, "harmonyos_godot_cleanup");
+	g_surface_created_func   = (godot_surface_created_t)dlsym(g_libgodot, "harmonyos_godot_surface_created");
+	g_surface_destroy_func   = (godot_surface_destroy_t)dlsym(g_libgodot, "harmonyos_godot_surface_destroy");
+	g_key_event_func         = (godot_key_event_t)dlsym(g_libgodot, "harmonyos_godot_key_event");
+	g_mouse_event_func       = (godot_mouse_event_t)dlsym(g_libgodot, "harmonyos_godot_mouse_event");
+	g_touch_event_func       = (godot_touch_event_t)dlsym(g_libgodot, "harmonyos_godot_touch_event");
+	g_input_text_func        = (godot_input_text_t)dlsym(g_libgodot, "harmonyos_godot_input_text");
+	g_on_pause_func          = (godot_on_pause_t)dlsym(g_libgodot, "harmonyos_godot_on_pause");
+	g_on_resume_func         = (godot_on_resume_t)dlsym(g_libgodot, "harmonyos_godot_on_resume");
+	g_on_back_press_func     = (godot_on_back_press_t)dlsym(g_libgodot, "harmonyos_godot_on_back_press");
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 8/16] dlsym DONE (11 symbols resolved)");
+
 	return true;
 }
 
 // ---- NAPI Exported Functions ----
 
 static napi_value NAPI_Init(napi_env env, napi_callback_info info) {
-	OH_LOG_INFO(LOG_APP, "NAPI_Init");
-	
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 6/16] NAPI_Init entry");
+
 	if (!load_libgodot()) {
+		OH_LOG_ERROR(LOG_APP, "[INIT STEP 6/16] FAILED — load_libgodot returned false");
 		napi_value result;
 		napi_create_int32(env, -1, &result);
 		return result;
 	}
-	
+
+	// Step 9 — Call the engine entry point (harmonyos_godot_init)
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 9/16] calling harmonyos_godot_init");
 	int status = g_init_func ? g_init_func() : -1;
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 9/16] harmonyos_godot_init returned: %{public}d", status);
+
 	napi_value result;
 	napi_create_int32(env, status, &result);
 	return result;

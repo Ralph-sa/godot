@@ -19,7 +19,7 @@ export struct GodotSurface {
 
   aboutToAppear(): void {
     this.surfaceId = 'godot_surface_' + Date.now().toString();
-    hilog.info(DOMAIN, TAG, 'Creating surface: ' + this.surfaceId);
+    hilog.info(DOMAIN, TAG, '[INIT STEP 15/16] GodotSurface aboutToAppear, id: ' + this.surfaceId);
   }
 
   aboutToDisappear(): void {
@@ -136,7 +136,7 @@ export struct GodotSurface {
         .focusable(true)
         .focusOnTouch(true)
         .onLoad(() => {
-          hilog.info(DOMAIN, TAG, 'XComponent onLoad: ' + this.surfaceId);
+          hilog.info(DOMAIN, TAG, '[INIT STEP 16/16] XComponent onLoad: ' + this.surfaceId);
           try {
             godot_napi.onSurfaceCreated(this.surfaceId);
           } catch (e) {

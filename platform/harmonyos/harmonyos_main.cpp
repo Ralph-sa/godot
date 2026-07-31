@@ -37,7 +37,7 @@ static struct PlatformInit {
 } g_platform_init;
 
 HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
-	OH_LOG_INFO(LOG_APP, "===== Godot Engine Initialization START =====");
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 10/16] harmonyos_godot_init entry");
 
 	bool expected = false;
 	if (!g_engine_initialized.compare_exchange_strong(expected, true)) {
@@ -45,14 +45,17 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 		return 0;
 	}
 
-	// Initialize crash handler early, before any engine setup.
+	// Step 11 — Initialize crash handler early, before any engine setup.
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 11/16] CrashHandler init");
 	g_crash_handler = new CrashHandlerHarmonyOS();
 	g_crash_handler->initialize();
 
-	// Create native window manager
+	// Step 12 — Create native window manager
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 12/16] HarmonyOSNativeWindow create");
 	g_native_window = new HarmonyOSNativeWindow();
 
-	// Create the OS instance (must exist before Main::setup())
+	// Step 13 — Create the OS instance (must exist before Main::setup())
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 13/16] OS_HarmonyOS instance create");
 	if (!OS_HarmonyOS::get_singleton() && !g_os_created.load(std::memory_order_acquire)) {
 		(void)memnew(OS_HarmonyOS);
 		g_os_created.store(true, std::memory_order_release);
@@ -73,18 +76,21 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 		args.push_back(&s[0]);
 	}
 
+	// Step 14 — Godot full engine init (heaviest step)
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 14/16] Main::setup START (heavy — engine full init)");
 	Error err = Main::setup(nullptr, 0, args.data());
 	if (err != OK) {
 		OH_LOG_ERROR(LOG_APP, "Main::setup failed with error: %{public}d", err);
 		OH_LOG_WARN(LOG_APP, "Main::setup returned error, continuing...");
 	}
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 14/16] Main::setup DONE");
 
-	OH_LOG_INFO(LOG_APP, "===== Godot Engine Initialization DONE =====");
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 10/16] harmonyos_godot_init DONE, returning 0");
 	return 0;
 }
 
 HARMONYOS_EXPORT_FN int harmonyos_godot_surface_created(const char *surface_id) {
-	OH_LOG_INFO(LOG_APP, "Surface created: %{public}s", surface_id);
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] Surface created: %{public}s", surface_id);
 
 	if (!g_native_window) {
 		OH_LOG_ERROR(LOG_APP, "Native window not initialized");
@@ -107,6 +113,7 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_surface_created(const char *surface_id) 
 		ds->notify_surface_created();
 
 		// Ensure Vulkan global context is initialized before reset_window
+		OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] Vulkan init + reset_window");
 		bool vulkan_ok = ds->check_vulkan_global_context(true);
 		if (vulkan_ok) {
 			ds->reset_window();
@@ -117,6 +124,7 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_surface_created(const char *surface_id) 
 		OH_LOG_WARN(LOG_APP, "DisplayServer not ready for surface reset");
 	}
 
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] Surface creation DONE");
 	return 0;
 }
 

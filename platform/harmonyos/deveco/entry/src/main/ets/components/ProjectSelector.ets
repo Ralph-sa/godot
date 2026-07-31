@@ -125,7 +125,7 @@ export struct ProjectSelector {
    * Returns the project path on success, empty string on failure.
    */
   private createProjectInSandbox(projectName: string): string {
-    hilog.info(DOMAIN, TAG, `Creating project "${projectName}"`);
+    hilog.info(DOMAIN, TAG, '[INIT STEP 2/16] createProjectInSandbox: ' + projectName);
 
     try {
       let projectsDir = this.getSandboxProjectsDir();
@@ -133,20 +133,20 @@ export struct ProjectSelector {
 
       // Ensure projects directory exists
       if (!fileIo.accessSync(projectsDir)) {
-        hilog.info(DOMAIN, TAG, `Creating projects directory: ${projectsDir}`);
+        hilog.info(DOMAIN, TAG, '[INIT STEP 2/16] Creating projects dir: ' + projectsDir);
         fileIo.mkdirSync(projectsDir, true);
       }
 
       // Check if project already exists
       if (fileIo.accessSync(projectDir)) {
-        hilog.warn(DOMAIN, TAG, `Project directory already exists: ${projectDir}`);
+        hilog.warn(DOMAIN, TAG, 'Project directory already exists: ' + projectDir);
         this.showToast('Project already exists!');
         return '';
       }
 
       // Create project directory
       fileIo.mkdirSync(projectDir, true);
-      hilog.info(DOMAIN, TAG, `Created project directory: ${projectDir}`);
+      hilog.info(DOMAIN, TAG, '[INIT STEP 2/16] Project dir created: ' + projectDir);
 
       // Write project.godot
       let projectConfig: string =
@@ -170,7 +170,7 @@ export struct ProjectSelector {
       fileIo.writeSync(fd.fd, projectConfig);
       fileIo.closeSync(fd);
 
-      hilog.info(DOMAIN, TAG, `project.godot written to: ${projectFile}`);
+      hilog.info(DOMAIN, TAG, '[INIT STEP 2/16] project.godot written: ' + projectFile);
       return projectDir;
     } catch (e) {
       hilog.error(DOMAIN, TAG, `createProjectInSandbox error: ${e}`);
@@ -182,13 +182,13 @@ export struct ProjectSelector {
   /** ---- New Project Dialog ---- */
 
   private showNewProjectInput(): void {
-    hilog.info(DOMAIN, TAG, 'Showing new project dialog');
+    hilog.info(DOMAIN, TAG, '[INIT STEP 1/16] Showing new project dialog');
     this.newProjectName = '';
     this.showNewProjectDialog = true;
   }
 
   private confirmNewProject(): void {
-    hilog.info(DOMAIN, TAG, `Confirm new project: "${this.newProjectName}"`);
+    hilog.info(DOMAIN, TAG, '[INIT STEP 2/16] confirmNewProject: "' + this.newProjectName + '"');
     this.showNewProjectDialog = false;
 
     let name = this.newProjectName.trim();
@@ -202,7 +202,7 @@ export struct ProjectSelector {
     if (projectPath.length > 0) {
       this.addRecentProject(projectPath);
       if (this.onProjectSelected) {
-        hilog.info(DOMAIN, TAG, `Firing onProjectSelected: ${projectPath}`);
+        hilog.info(DOMAIN, TAG, '[INIT STEP 3/16] Firing onProjectSelected: ' + projectPath);
         this.onProjectSelected(projectPath);
       }
       this.showToast('Project created: ' + name);
