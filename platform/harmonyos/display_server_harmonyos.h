@@ -8,6 +8,7 @@
 #include "servers/display/native_menu.h"
 
 #include <atomic>
+#include <cstdint>
 
 class InputEvent;
 class TTS_HarmonyOS;
@@ -46,9 +47,15 @@ protected:
 	// must be atomic to avoid a data race on the plain Size2i.
 	std::atomic<int> window_size_x{0};
 	std::atomic<int> window_size_y{0};
-	int screen_dpi_val = 160;
-	float screen_scale_val = 1.0f;
-	float screen_refresh_rate_val = 60.0f;
+	// Queried from the native display manager at startup and on every surface
+	// resize. Atomic because the resize path runs on the JS/NAPI thread while
+	// the engine reads these from the main thread. The initial values are only
+	// a fallback for the window before the first successful query.
+	std::atomic<int> screen_dpi_val{160};
+	std::atomic<float> screen_scale_val{1.0f};
+	std::atomic<float> screen_refresh_rate_val{60.0f};
+	std::atomic<int> screen_size_x{0};
+	std::atomic<int> screen_size_y{0};
 	std::atomic<bool> window_focused{true};
 	std::atomic<bool> window_can_draw_val{false};
 	Point2i _window_position = Point2i(0, 0);
@@ -68,6 +75,10 @@ public:
 	// notify_surface_changed, engine thread reads).
 	void set_window_size(const Size2i &p_size);
 	Size2i get_window_size() const;
+
+	// Pull DPI, scale, refresh rate and size from the native display manager.
+	// Safe to call repeatedly; leaves the previous values in place on failure.
+	void refresh_screen_metrics();
 
 	virtual bool has_feature(DisplayServerEnums::Feature p_feature) const override;
 	virtual String get_name() const override;

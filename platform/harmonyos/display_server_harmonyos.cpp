@@ -24,6 +24,8 @@
 
 #include <atomic>
 #include <dlfcn.h>
+#include <window_manager/oh_display_info.h>
+#include <window_manager/oh_display_manager.h>
 
 static std::atomic<RenderingContextDriver *> rendering_context_global(nullptr);
 static std::atomic<bool> rendering_context_global_checked(false);
@@ -38,15 +40,14 @@ bool DisplayServerHarmonyOS::has_feature(DisplayServerEnums::Feature p_feature) 
 		case DisplayServerEnums::FEATURE_CLIPBOARD:
 		case DisplayServerEnums::FEATURE_MOUSE:
 		case DisplayServerEnums::FEATURE_TOUCHSCREEN:
+		// DPI 与 scale 现由 OH_NativeDisplayManager 真实查询，并随折叠/旋转
+		// 经变更监听更新，引擎可以信任这两个值。
+		case DisplayServerEnums::FEATURE_HIDPI:
 			return true;
 
 		// 以下能力目前只有空壳实现。声明 false 让引擎走它自己设计好的降级路径
 		// 是安全的；声明 true 却没有实现，引擎会信以为真地走进空路径，表现为
 		// 一批无法归因的怪异行为。每项的复位条件见注释。
-		case DisplayServerEnums::FEATURE_HIDPI:
-			// screen_get_dpi / screen_get_scale 返回的成员从无写入点，
-			// 恒为 160 与 1.0。接入 @ohos.display 真实数据后可改回 true。
-			return false;
 		case DisplayServerEnums::FEATURE_KEEP_SCREEN_ON:
 			// screen_set_keep_on 只写内存标志，未调用任何 OHOS 电源管理接口。
 			return false;
@@ -176,24 +177,35 @@ Size2i DisplayServerHarmonyOS::get_window_size() const {
 }
 
 Size2i DisplayServerHarmonyOS::screen_get_size(int p_screen) const {
+	// The window is not the screen: in split-screen or floating-window mode the
+	// surface is only part of the display. Fall back to the window size only
+	// until the display manager has answered.
+	int w = screen_size_x.load(std::memory_order_acquire);
+	int h = screen_size_y.load(std::memory_order_acquire);
+	if (w > 0 && h > 0) {
+		return Size2i(w, h);
+	}
 	return get_window_size();
 }
 
 Rect2i DisplayServerHarmonyOS::screen_get_usable_rect(int p_screen) const {
-	Size2i size = get_window_size();
+	// Excludes nothing yet: the available-area API reports the cutout-safe
+	// region, which the engine treats as the usable rect only for the primary
+	// screen. Reporting the full screen is the honest approximation here.
+	Size2i size = screen_get_size(p_screen);
 	return Rect2i(0, 0, size.width, size.height);
 }
 
 int DisplayServerHarmonyOS::screen_get_dpi(int p_screen) const {
-	return screen_dpi_val;
+	return screen_dpi_val.load(std::memory_order_acquire);
 }
 
 float DisplayServerHarmonyOS::screen_get_scale(int p_screen) const {
-	return screen_scale_val;
+	return screen_scale_val.load(std::memory_order_acquire);
 }
 
 float DisplayServerHarmonyOS::screen_get_refresh_rate(int p_screen) const {
-	return screen_refresh_rate_val;
+	return screen_refresh_rate_val.load(std::memory_order_acquire);
 }
 
 // 只记录状态：OHOS NDK 无电源管理接口，屏幕常亮需要 ArkTS 侧调用
@@ -273,6 +285,8 @@ DisplayServerEnums::WindowID DisplayServerHarmonyOS::get_window_at_screen_positi
 }
 
 void DisplayServerHarmonyOS::window_attach_instance_id(ObjectID p_instance, DisplayServerEnums::WindowID p_window) {
+	OH_LOG_INFO(LOG_APP, "[DS] window_attach_instance_id win=%{public}d obj=%{public}llu",
+			(int)p_window, (unsigned long long)p_instance.id);
 	// Not supported - handled via ArkTS
 }
 
@@ -331,7 +345,13 @@ void DisplayServerHarmonyOS::window_set_size(const Size2i p_size, DisplayServerE
 }
 
 Size2i DisplayServerHarmonyOS::window_get_size(DisplayServerEnums::WindowID p_window) const {
-	return get_window_size();
+	Size2i s = get_window_size();
+	static int dbg_n = 0;
+	if ((dbg_n++ % 300) == 0) {
+		OH_LOG_INFO(LOG_APP, "[DS] window_get_size(%{public}d) -> %{public}dx%{public}d (call %{public}d)",
+				(int)p_window, s.width, s.height, dbg_n);
+	}
+	return s;
 }
 
 Size2i DisplayServerHarmonyOS::window_get_size_with_decorations(DisplayServerEnums::WindowID p_window) const {
@@ -492,6 +512,14 @@ void DisplayServerHarmonyOS::notify_surface_destroyed() {
 void DisplayServerHarmonyOS::update_window_size(int p_width, int p_height) {
 	set_window_size(Size2i(p_width, p_height));
 	_window_position = Point2i(0, 0);
+
+	// Folding, rotating or moving to another display all change density and
+	// refresh rate, and all of them resize the surface first — so this is the
+	// point where stale metrics can be refreshed without a change listener.
+	refresh_screen_metrics();
+
+	OH_LOG_INFO(LOG_APP, "[DS] update_window_size %{public}dx%{public}d, rect_cb_valid=%{public}d",
+			p_width, p_height, (int)rect_changed_callback.is_valid());
 
 	// Fire the rect-changed callback so the engine knows the window was resized.
 	if (rect_changed_callback.is_valid()) {
@@ -714,13 +742,43 @@ DisplayServerHarmonyOS::DisplayServerHarmonyOS(const String &p_rendering_driver,
 	// silent. Mirrors DisplayServerWindows, which registers at the same point.
 	Input::get_singleton()->set_event_dispatch_function(_dispatch_input_events);
 
-	// Screen DPI 默认值 160（与 Godot 引擎基准 DPI 一致，即 mdpi 1:1 密度）。
-	// screen_refresh_rate_val 默认值 60.0f。
-	// OHOS Native XComponent API (OH_NativeXComponent) 不暴露 density/dpi/refresh_rate
-	// 信息 — 这些值仅可通过 ArkTS 侧的 @ohos.display.getDefaultDisplaySync() 获取。
-	// 升级路径：ArkTS 层在启动时通过 weak symbol 传递真实值：
-	//   extern "C" void harmonyos_notify_display_info(int dpi, float scale, float refresh_rate);
-	// 在回调中更新 screen_dpi_val / screen_scale_val / screen_refresh_rate_val。
+	refresh_screen_metrics();
+}
+
+void DisplayServerHarmonyOS::refresh_screen_metrics() {
+	// Each value is applied independently: a partial failure should not discard
+	// the ones that did resolve.
+	int32_t density_dpi = 0;
+	if (OH_NativeDisplayManager_GetDefaultDisplayDensityDpi(&density_dpi) == DISPLAY_MANAGER_OK && density_dpi > 0) {
+		screen_dpi_val.store(density_dpi, std::memory_order_release);
+	}
+
+	float virtual_pixel_ratio = 0.0f;
+	if (OH_NativeDisplayManager_GetDefaultDisplayVirtualPixelRatio(&virtual_pixel_ratio) == DISPLAY_MANAGER_OK &&
+			virtual_pixel_ratio > 0.0f) {
+		screen_scale_val.store(virtual_pixel_ratio, std::memory_order_release);
+	}
+
+	uint32_t refresh_rate = 0;
+	if (OH_NativeDisplayManager_GetDefaultDisplayRefreshRate(&refresh_rate) == DISPLAY_MANAGER_OK && refresh_rate > 0) {
+		screen_refresh_rate_val.store((float)refresh_rate, std::memory_order_release);
+	}
+
+	int32_t display_width = 0;
+	int32_t display_height = 0;
+	if (OH_NativeDisplayManager_GetDefaultDisplayWidth(&display_width) == DISPLAY_MANAGER_OK &&
+			OH_NativeDisplayManager_GetDefaultDisplayHeight(&display_height) == DISPLAY_MANAGER_OK &&
+			display_width > 0 && display_height > 0) {
+		screen_size_x.store(display_width, std::memory_order_release);
+		screen_size_y.store(display_height, std::memory_order_release);
+	}
+
+	OH_LOG_INFO(LOG_APP, "[DS] screen metrics: %{public}dx%{public}d dpi=%{public}d scale=%{public}.2f refresh=%{public}.1f",
+			screen_size_x.load(std::memory_order_acquire),
+			screen_size_y.load(std::memory_order_acquire),
+			screen_dpi_val.load(std::memory_order_acquire),
+			(double)screen_scale_val.load(std::memory_order_acquire),
+			(double)screen_refresh_rate_val.load(std::memory_order_acquire));
 }
 
 DisplayServerHarmonyOS::~DisplayServerHarmonyOS() {

@@ -174,6 +174,7 @@ def configure(env: "SConsEnvironment"):
         "native_window",     # XComponent NativeWindow
         "hilog_ndk.z",       # HiLog
         "ace_ndk.z",         # ArkUI Native
+        "native_display_manager",  # Screen DPI / scale / refresh rate
         "ohaudio",           # OHAudio
         "z",                 # zlib
         "m",                 # math
