@@ -247,9 +247,25 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_start() {
 		if (os) {
 			os->process_joypad_events();
 		}
+
+		// Heartbeat. Without a log emitted from inside the loop there is no way
+		// to tell a healthy engine from one that entered the loop and blocked on
+		// the very first iteration — both look identical from outside: process
+		// alive, no crash, startup milestones reached, screen blank. The first
+		// few frames are traced on both sides of Main::iteration() so a hang can
+		// be attributed to the iteration itself rather than to the loop.
+		if (frame_count < 5 || (frame_count % 300) == 0) {
+			OH_LOG_INFO(LOG_APP, "[frame] %{public}d begin (frames_drawn=%{public}llu)", frame_count,
+					(unsigned long long)Engine::get_singleton()->get_frames_drawn());
+		}
+
 		if (Main::iteration()) {
 			OH_LOG_INFO(LOG_APP, "[frame] Main::iteration requested exit at frame=%{public}d", frame_count);
 			break; // Engine requested exit.
+		}
+
+		if (frame_count < 5) {
+			OH_LOG_INFO(LOG_APP, "[frame] %{public}d end", frame_count);
 		}
 		frame_count++;
 		usleep(16000); // ~60 FPS

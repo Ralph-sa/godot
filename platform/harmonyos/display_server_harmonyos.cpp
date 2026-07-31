@@ -397,6 +397,11 @@ bool DisplayServerHarmonyOS::window_can_draw(DisplayServerEnums::WindowID p_wind
 }
 
 bool DisplayServerHarmonyOS::can_any_window_draw() const {
+	static int dbg_count = 0;
+	if ((dbg_count++ % 120) == 0) {
+		OH_LOG_INFO(LOG_APP, "[DS] can_any_window_draw -> %{public}d (call %{public}d)",
+				(int)window_can_draw_val.load(std::memory_order_acquire), dbg_count);
+	}
 	return window_can_draw_val.load(std::memory_order_acquire);
 }
 
