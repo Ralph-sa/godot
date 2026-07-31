@@ -8,37 +8,9 @@
       "abiFilters": ["x86_64"]
     }
   },
-  "buildOptionSet": [
-    {
-      "name": "release",
-      "arkOptions": {
-        "obfuscation": {
-          "ruleOptions": {
-            "enable": false
-          }
-        }
-      }
-    },
-    {
-      "name": "test",
-      "arkOptions": {
-        "runtimeOnly": {
-          "sources": [
-            "./src/ohosTest/ets/test/**/*.ets",
-            "./src/ohosTest/ets/testability/**/*.ets",
-            "./src/ohosTest/ets/testrunner/**/*.ets"
-          ]
-        }
-      }
-    }
-  ],
   "targets": [
     {
       "name": "default",
-      "runtimeOS": "HarmonyOS"
-    },
-    {
-      "name": "ohosTest",
       "runtimeOS": "HarmonyOS"
     }
   ]
