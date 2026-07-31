@@ -67,7 +67,7 @@ def main():
     print()
 
     print("[5] Godot Platform Layer")
-    platform = "godot_src/platform/harmonyos"
+    platform = "../../../platform/harmonyos"
     for f in ["os_harmonyos.cpp", "display_server_harmonyos.cpp", "harmonyos_native_window.cpp",
               "harmonyos_input.cpp", "harmonyos_audio.cpp", "harmonyos_main.cpp",
               "rendering_context_driver_vulkan_harmonyos.cpp", "vulkan_ohos_surface.h",

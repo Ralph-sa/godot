@@ -9,7 +9,7 @@ set -euo pipefail
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GODOT_SRC="$SCRIPT_DIR/godot_src"
+GODOT_SRC="$SCRIPT_DIR/../../.."
 ENTRY_LIBS="$SCRIPT_DIR/entry/libs/arm64-v8a"
 SDK="C:/Users/happyelements/AppData/Local/OpenHarmony/Sdk/20"
 

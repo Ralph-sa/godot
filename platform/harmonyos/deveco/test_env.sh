@@ -73,7 +73,9 @@ echo ""
 
 # ---- 4. Project Structure ----
 echo "[4] GodotHOS Project"
-PROJ="c:/Toro/GodotHOS"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJ="$SCRIPT_DIR"
+GODOT_SRC="$SCRIPT_DIR/../../.."
 check "build-profile.json5"        test -f "$PROJ/build-profile.json5"
 check "hvigorfile.ts"              test -f "$PROJ/hvigorfile.ts"
 check "entry/module.json5"         test -f "$PROJ/entry/src/main/module.json5"
@@ -95,7 +97,7 @@ echo ""
 
 # ---- 6. Godot Platform Sources ----
 echo "[6] Godot Platform"
-HOS="$PROJ/godot_src/platform/harmonyos"
+HOS="$GODOT_SRC/platform/harmonyos"
 check "os_harmonyos.cpp"           test -f "$HOS/os_harmonyos.cpp"
 check "display_server_harmonyos.cpp" test -f "$HOS/display_server_harmonyos.cpp"
 check "vulkan_ohos_surface.h"      test -f "$HOS/vulkan_ohos_surface.h"

@@ -2,9 +2,7 @@
 entry/libs/arm64-v8a/libgodot.so
 
 # Build outputs
-.hvigor/outputs/
-.hvigor/cache/
-.hvigor/report/
+.hvigor/
 entry/build/
 entry/.cxx/
 
