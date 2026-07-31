@@ -312,6 +312,11 @@ extern "C" void harmonyos_notify_window_title(const char *title) {
 // Module registration
 EXTERN_C_START
 static napi_value GodotModuleInit(napi_env env, napi_value exports) {
+	// Wrap all NAPI functions inside a 'godot_napi' object.
+	// ArkTS imports this as: import { godot_napi } from 'libgodot_napi.so'
+	napi_value godot_napi_obj;
+	napi_create_object(env, &godot_napi_obj);
+
 	napi_property_descriptor desc[] = {
 		{"init",                  nullptr, NAPI_Init,                  nullptr, nullptr, nullptr, napi_default, nullptr},
 		{"cleanup",               nullptr, NAPI_Cleanup,               nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -326,7 +331,10 @@ static napi_value GodotModuleInit(napi_env env, napi_value exports) {
 		{"onBackPress",           nullptr, NAPI_OnBackPress,           nullptr, nullptr, nullptr, napi_default, nullptr},
 		{"registerTitleCallback", nullptr, NAPI_RegisterTitleCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
 	};
-	napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
+	napi_define_properties(env, godot_napi_obj, sizeof(desc) / sizeof(desc[0]), desc);
+
+	// Export wrapper object as named export 'godot_napi'
+	napi_set_named_property(env, exports, "godot_napi", godot_napi_obj);
 	return exports;
 }
 EXTERN_C_END
