@@ -1,48 +1,50 @@
 /**
- * ProjectSelector.ets - Native file browser for Godot project selection
+ * ProjectSelector.ets - Native project manager for Godot HarmonyOS
  *
- * Provides a HarmonyOS-native UI for selecting a Godot project
- * before the engine is fully initialized. Uses system file picker
- * and directory browsing APIs.
+ * "Open Project" uses system file picker to locate existing projects.
+ * "New Project" creates a project directly in the app sandbox.
  */
+
 import { fileIo } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import { promptAction } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
 const TAG = 'ProjectSelector';
+const DOMAIN = 0x0000;
 
-/** Callback when user selects a project directory */
 export type ProjectSelectCallback = (projectPath: string) => void;
 
 @ComponentV2
 export struct ProjectSelector {
   @Param @Require onProjectSelected?: ProjectSelectCallback;
   @Local recentProjects: string[] = [];
-  @Local showRecent: boolean = true;
+  @Local showNewProjectDialog: boolean = false;
+  @Local newProjectName: string = '';
 
   aboutToAppear(): void {
+    hilog.info(DOMAIN, TAG, 'ProjectSelector aboutToAppear');
     this.loadRecentProjects();
   }
 
-  /**
-   * Load recently opened projects from preferences.
-   */
+  /** ---- Recent Projects Persistence ---- */
+
   private loadRecentProjects(): void {
     try {
       let prefsPath: string = this.getPrefsPath();
+      hilog.info(DOMAIN, TAG, `Loading recent projects from: ${prefsPath}`);
       if (fileIo.accessSync(prefsPath)) {
         let content: string = fileIo.readTextSync(prefsPath);
         this.recentProjects = JSON.parse(content);
+        hilog.info(DOMAIN, TAG, `Loaded ${this.recentProjects.length} recent projects`);
+      } else {
+        hilog.info(DOMAIN, TAG, 'No recent projects file found');
       }
     } catch (e) {
-      hilog.warn(0x0000, TAG, `Failed to load recent projects: ${e}`);
+      hilog.warn(DOMAIN, TAG, `Failed to load recent projects: ${e}`);
     }
   }
 
-  /**
-   * Save recently opened projects to preferences.
-   */
   private saveRecentProjects(): void {
     try {
       let prefsPath: string = this.getPrefsPath();
@@ -51,14 +53,12 @@ export struct ProjectSelector {
         fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       fileIo.writeSync(fd.fd, jsonStr);
       fileIo.closeSync(fd);
+      hilog.info(DOMAIN, TAG, 'Recent projects saved');
     } catch (e) {
-      hilog.warn(0x0000, TAG, `Failed to save recent projects: ${e}`);
+      hilog.warn(DOMAIN, TAG, `Failed to save recent projects: ${e}`);
     }
   }
 
-  /**
-   * Add a project path to recent list.
-   */
   private addRecentProject(projectPath: string): void {
     let idx: number = this.recentProjects.indexOf(projectPath);
     if (idx >= 0) {
@@ -76,10 +76,114 @@ export struct ProjectSelector {
     return context.filesDir + '/godot_recent_projects.json';
   }
 
+  /** ---- Sandbox Project Creation ---- */
+
   /**
-   * Open the system directory picker and validate the selection.
+   * Get the sandbox root used for creating new projects.
+   * Uses the app's filesDir as the base (maps to /data/storage/.../files).
    */
+  private getSandboxProjectsDir(): string {
+    let context = getContext(this);
+    let dir = context.filesDir + '/projects';
+    hilog.info(DOMAIN, TAG, `Sandbox projects dir: ${dir}`);
+    return dir;
+  }
+
+  /**
+   * Create a new Godot project in the app sandbox.
+   */
+  private createProjectInSandbox(projectName: string): string {
+    let projectsDir = this.getSandboxProjectsDir();
+    let projectDir = projectsDir + '/' + projectName;
+
+    hilog.info(DOMAIN, TAG, `Creating project "${projectName}" at ${projectDir}`);
+
+    // Ensure projects directory exists
+    if (!fileIo.accessSync(projectsDir)) {
+      hilog.info(DOMAIN, TAG, `Creating projects directory: ${projectsDir}`);
+      fileIo.mkdirSync(projectsDir, true);
+    }
+
+    // Check if project already exists
+    if (fileIo.accessSync(projectDir)) {
+      hilog.warn(DOMAIN, TAG, `Project directory already exists: ${projectDir}`);
+      promptAction.showToast({
+        message: 'Project already exists!',
+        duration: 2000
+      });
+      return '';
+    }
+
+    // Create project directory
+    fileIo.mkdirSync(projectDir, true);
+    hilog.info(DOMAIN, TAG, `Created project directory: ${projectDir}`);
+
+    // Write project.godot
+    let projectConfig: string =
+      '; Engine configuration file.\n' +
+      '; It\'s best edited using the editor UI and not directly,\n' +
+      '; since the parameters that go here are not all obvious.\n' +
+      ';\n' +
+      '; Format:\n' +
+      ';   [section] ; section goes between []\n' +
+      ';   param=value ; assign values to parameters\n' +
+      '\n' +
+      'config_version=5\n' +
+      '\n' +
+      '[application]\n' +
+      '\n' +
+      'config/name="' + projectName + '"\n';
+
+    let projectFile = projectDir + '/project.godot';
+    let fd = fileIo.openSync(projectFile, fileIo.OpenMode.CREATE |
+      fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+    fileIo.writeSync(fd.fd, projectConfig);
+    fileIo.closeSync(fd);
+
+    hilog.info(DOMAIN, TAG, `project.godot written to: ${projectFile}`);
+    return projectDir;
+  }
+
+  /** ---- New Project Dialog ---- */
+
+  private showNewProjectInput(): void {
+    hilog.info(DOMAIN, TAG, 'Showing new project dialog');
+    this.newProjectName = '';
+    this.showNewProjectDialog = true;
+  }
+
+  private confirmNewProject(): void {
+    hilog.info(DOMAIN, TAG, `Confirm new project: "${this.newProjectName}"`);
+    this.showNewProjectDialog = false;
+
+    let name = this.newProjectName.trim();
+    if (name.length === 0) {
+      hilog.warn(DOMAIN, TAG, 'Project name is empty');
+      promptAction.showToast({ message: 'Please enter a project name', duration: 2000 });
+      return;
+    }
+
+    let projectPath = this.createProjectInSandbox(name);
+    if (projectPath.length > 0) {
+      this.addRecentProject(projectPath);
+      if (this.onProjectSelected) {
+        hilog.info(DOMAIN, TAG, `Firing onProjectSelected: ${projectPath}`);
+        this.onProjectSelected(projectPath);
+      }
+      promptAction.showToast({ message: 'Project created: ' + name, duration: 2000 });
+    }
+  }
+
+  private cancelNewProject(): void {
+    hilog.info(DOMAIN, TAG, 'New project cancelled');
+    this.showNewProjectDialog = false;
+    this.newProjectName = '';
+  }
+
+  /** ---- Open Existing Project ---- */
+
   private async browseForProject(): Promise<void> {
+    hilog.info(DOMAIN, TAG, 'Opening file picker');
     try {
       let documentPicker = new picker.DocumentViewPicker();
       let options = new picker.DocumentSelectOptions();
@@ -88,126 +192,178 @@ export struct ProjectSelector {
       documentPicker.select(options).then((uris: string[]) => {
         if (uris && uris.length > 0) {
           let selectedUri = uris[0];
-          hilog.info(0x0000, TAG, `Selected path: ${selectedUri}`);
-
-          // Validate it's a Godot project (contains project.godot)
+          hilog.info(DOMAIN, TAG, `File picker returned: ${selectedUri}`);
           this.validateAndOpen(selectedUri);
+        } else {
+          hilog.info(DOMAIN, TAG, 'File picker cancelled (no selection)');
         }
       }).catch((err: Error) => {
-        hilog.error(0x0000, TAG, `File picker error: ${err.message}`);
+        hilog.error(DOMAIN, TAG, `File picker error: ${err.message}`);
       });
     } catch (e) {
-      hilog.error(0x0000, TAG, `Browse error: ${e}`);
+      hilog.error(DOMAIN, TAG, `Browse error: ${e}`);
     }
   }
 
   /**
-   * Validate that the selected directory contains a Godot project
-   * and invoke the callback.
+   * Validate a directory as a Godot project.
+   * If it's outside the sandbox but the user wants to create a project
+   * there, redirect it into the sandbox.
    */
   private validateAndOpen(directoryPath: string): void {
+    hilog.info(DOMAIN, TAG, `Validating: ${directoryPath}`);
     try {
       let projectFile: string = directoryPath + '/project.godot';
 
       if (fileIo.accessSync(projectFile)) {
-        // Valid Godot project found
+        hilog.info(DOMAIN, TAG, `Valid Godot project found: ${directoryPath}`);
         this.addRecentProject(directoryPath);
-
         if (this.onProjectSelected) {
           this.onProjectSelected(directoryPath);
         }
-
-        promptAction.showToast({
-          message: 'Project opened: ' + directoryPath,
-          duration: 2000
-        });
+        promptAction.showToast({ message: 'Project opened', duration: 2000 });
       } else {
-        // Not a valid Godot project
+        hilog.info(DOMAIN, TAG, `No project.godot in ${directoryPath}, offering to create`);
+        // Extract project name from the path for the dialog message
+        let parts = directoryPath.split('/');
+        let folderName = parts[parts.length - 1] || 'NewProject';
+
         promptAction.showDialog({
           title: 'Invalid Project',
-          message: 'The selected directory does not contain a project.godot file.\n\nWould you like to create a new project here?',
+          message: 'The selected directory does not contain a project.godot file.\n\nCreate a new project here?',
           buttons: [
             { text: 'Cancel', color: '#999999' },
             { text: 'Create New', color: '#FF6B6B' }
           ]
         }).then((result) => {
           if (result.index === 1) {
-            this.createNewProject(directoryPath);
+            hilog.info(DOMAIN, TAG, `User chose to create project at: ${directoryPath}`);
+            this.createAndOpenAt(directoryPath, folderName);
+          } else {
+            hilog.info(DOMAIN, TAG, 'User cancelled project creation');
           }
         });
       }
     } catch (e) {
-      hilog.error(0x0000, TAG, `Validate error: ${e}`);
-      promptAction.showToast({
-        message: 'Failed to access directory',
-        duration: 2000
-      });
+      hilog.error(DOMAIN, TAG, `Validate error: ${e}`);
+      promptAction.showToast({ message: 'Failed to access directory', duration: 2000 });
     }
   }
 
   /**
-   * Create a minimal Godot project in the selected directory.
+   * Create a project at a user-selected path.
+   * If the path is outside the sandbox, fallback to sandbox with same project name.
    */
-  private createNewProject(directoryPath: string): void {
+  private createAndOpenAt(directoryPath: string, fallbackName: string): void {
+    hilog.info(DOMAIN, TAG, `createAndOpenAt: path=${directoryPath}, fallback=${fallbackName}`);
     try {
-      // Create a minimal project.godot file
-      let projectConfig: string = `; Engine configuration file.
-; It's best edited using the editor UI and not directly,
-; since the parameters that go here are not all obvious.
-;
-; Format:
-;   [section] ; section goes between []
-;   param=value ; assign values to parameters
-
-config_version=5
-
-[application]
-
-config/name="New Godot Project"
-`;
-
-      let projectFile: string = directoryPath + '/project.godot';
-      let fd = fileIo.openSync(projectFile, fileIo.OpenMode.CREATE |
-        fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(fd.fd, projectConfig);
-      fileIo.closeSync(fd);
-
-      this.addRecentProject(directoryPath);
-
-      if (this.onProjectSelected) {
-        this.onProjectSelected(directoryPath);
+      // Try writing directly
+      let projectFile = directoryPath + '/project.godot';
+      let written = false;
+      try {
+        let fd = fileIo.openSync(projectFile, fileIo.OpenMode.CREATE |
+          fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+        let projectConfig: string =
+          '; Engine configuration file.\n' +
+          'config_version=5\n\n' +
+          '[application]\n\n' +
+          'config/name="' + fallbackName + '"\n';
+        fileIo.writeSync(fd.fd, projectConfig);
+        fileIo.closeSync(fd);
+        written = true;
+        hilog.info(DOMAIN, TAG, `Written directly to: ${projectFile}`);
+      } catch (writeErr) {
+        hilog.warn(DOMAIN, TAG, `Direct write failed (likely sandbox): ${writeErr}. Redirecting...`);
       }
 
-      promptAction.showToast({
-        message: 'New project created',
-        duration: 2000
-      });
+      if (written) {
+        this.addRecentProject(directoryPath);
+        if (this.onProjectSelected) {
+          this.onProjectSelected(directoryPath);
+        }
+        promptAction.showToast({ message: 'Project created', duration: 2000 });
+      } else {
+        // Fallback: create in sandbox
+        let sandboxPath = this.createProjectInSandbox(fallbackName);
+        if (sandboxPath.length > 0) {
+          this.addRecentProject(sandboxPath);
+          if (this.onProjectSelected) {
+            this.onProjectSelected(sandboxPath);
+          }
+          promptAction.showToast({
+            message: 'Created in app sandbox: ' + fallbackName,
+            duration: 2000
+          });
+        }
+      }
     } catch (e) {
-      hilog.error(0x0000, TAG, `Create project error: ${e}`);
-      promptAction.showToast({
-        message: 'Failed to create project',
-        duration: 2000
-      });
+      hilog.error(DOMAIN, TAG, `createAndOpenAt error: ${e}`);
+      promptAction.showToast({ message: 'Failed to create project', duration: 2000 });
     }
   }
 
-  /**
-   * Open a recently used project.
-   */
+  /** ---- Recent Projects ---- */
+
   private openRecentProject(projectPath: string): void {
+    hilog.info(DOMAIN, TAG, `Opening recent project: ${projectPath}`);
     this.validateAndOpen(projectPath);
   }
 
-  /**
-   * Remove a project from recent list.
-   */
   private removeRecentProject(index: number): void {
+    hilog.info(DOMAIN, TAG, `Removing recent project at index ${index}`);
     this.recentProjects.splice(index, 1);
     this.saveRecentProjects();
   }
 
   build() {
     Column() {
+      // New Project Dialog (modal)
+      if (this.showNewProjectDialog) {
+        Column() {
+          Text('New Project')
+            .fontSize(22)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#FFFFFF')
+            .margin({ bottom: 20 })
+
+          TextInput({ text: $$this.newProjectName, placeholder: 'Enter project name...' })
+            .width('100%')
+            .height(48)
+            .fontSize(16)
+            .backgroundColor('#2A2A3A')
+            .borderRadius(8)
+            .padding({ left: 16, right: 16 })
+            .margin({ bottom: 20 })
+
+          Row() {
+            Button('Cancel')
+              .width(100)
+              .height(40)
+              .backgroundColor('#444455')
+              .fontColor('#CCCCCC')
+              .borderRadius(6)
+              .onClick(() => this.cancelNewProject())
+
+            Blank().width(16)
+
+            Button('Create')
+              .width(100)
+              .height(40)
+              .backgroundColor('#FF6B6B')
+              .fontColor('#FFFFFF')
+              .borderRadius(6)
+              .onClick(() => this.confirmNewProject())
+          }
+        }
+        .width(340)
+        .padding(24)
+        .backgroundColor('#1E1E2E')
+        .borderRadius(12)
+        .shadow({ radius: 20, color: '#00000066' })
+        .position({ x: '50%', y: '30%' })
+        .translate({ x: '-50%', y: '0%' })
+      }
+
       // Header
       Row() {
         Text('Godot Editor')
@@ -219,67 +375,46 @@ config/name="New Godot Project"
       .padding({ top: 32, bottom: 24 })
       .justifyContent(FlexAlign.Center)
 
-      // Project Manager title
       Text('Project Manager')
         .fontSize(20)
         .fontColor('#88FFFFFF')
         .margin({ bottom: 32 })
 
-      // Main actions
+      // Actions
       Column() {
-        // Browse button
         Button() {
           Row() {
             Image($r('app.media.app_icon'))
-              .width(24)
-              .height(24)
-              .margin({ right: 12 })
+              .width(24).height(24).margin({ right: 12 })
             Text('Open Project')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
+              .fontSize(16).fontWeight(FontWeight.Medium)
           }
         }
-        .width(220)
-        .height(48)
-        .backgroundColor('#FF6B6B')
-        .borderRadius(8)
-        .onClick(() => {
-          this.browseForProject();
-        })
+        .width(220).height(48)
+        .backgroundColor('#FF6B6B').borderRadius(8)
+        .onClick(() => this.browseForProject())
 
-        // New Project button
         Button() {
           Row() {
             Image($r('app.media.app_icon'))
-              .width(24)
-              .height(24)
-              .margin({ right: 12 })
+              .width(24).height(24).margin({ right: 12 })
             Text('New Project')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
+              .fontSize(16).fontWeight(FontWeight.Medium)
           }
         }
-        .width(220)
-        .height(48)
-        .backgroundColor('#3A3A4A')
-        .borderRadius(8)
+        .width(220).height(48)
+        .backgroundColor('#3A3A4A').borderRadius(8)
         .margin({ top: 12 })
-        .onClick(() => {
-          this.browseForProject();
-        })
+        .onClick(() => this.showNewProjectInput())
       }
       .margin({ bottom: 40 })
 
-      // Recent projects section
+      // Recent Projects
       if (this.recentProjects.length > 0) {
         Column() {
-          Divider()
-            .color('#333344')
-            .margin({ bottom: 20 })
-
+          Divider().color('#333344').margin({ bottom: 20 })
           Text('Recent Projects')
-            .fontSize(14)
-            .fontColor('#666688')
+            .fontSize(14).fontColor('#666688')
             .margin({ bottom: 12 })
 
           List() {
@@ -287,43 +422,30 @@ config/name="New Godot Project"
               ListItem() {
                 Row() {
                   Text(projectPath)
-                    .fontSize(14)
-                    .fontColor('#CCCCCC')
-                    .layoutWeight(1)
-                    .maxLines(1)
+                    .fontSize(14).fontColor('#CCCCCC')
+                    .layoutWeight(1).maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
 
                   Button('X')
-                    .width(28)
-                    .height(28)
-                    .fontSize(12)
-                    .fontColor('#FF6B6B')
-                    .backgroundColor('#00000000')
-                    .onClick(() => {
-                      this.removeRecentProject(index);
-                    })
+                    .width(28).height(28).fontSize(12)
+                    .fontColor('#FF6B6B').backgroundColor('#00000000')
+                    .onClick(() => this.removeRecentProject(index))
                 }
                 .width('100%')
                 .padding({ left: 16, right: 8, top: 8, bottom: 8 })
               }
-              .onClick(() => {
-                this.openRecentProject(projectPath);
-              })
-              .backgroundColor('#252535')
-              .borderRadius(6)
+              .onClick(() => this.openRecentProject(projectPath))
+              .backgroundColor('#252535').borderRadius(6)
               .margin({ bottom: 4 })
             }, (item: string, index: number) => index.toString())
           }
-          .width('100%')
-          .constraintSize({ maxHeight: 200 })
+          .width('100%').constraintSize({ maxHeight: 200 })
         }
-        .width('100%')
-        .constraintSize({ maxWidth: 500 })
+        .width('100%').constraintSize({ maxWidth: 500 })
         .padding({ left: 16, right: 16 })
       }
     }
-    .width('100%')
-    .height('100%')
+    .width('100%').height('100%')
     .backgroundColor('#1E1E2E')
     .justifyContent(FlexAlign.Center)
   }
