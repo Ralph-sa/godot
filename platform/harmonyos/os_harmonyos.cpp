@@ -83,8 +83,12 @@ void OS_HarmonyOS::initialize_core() {
 }
 
 void OS_HarmonyOS::initialize() {
-	// OS initialization - called by Main::setup()
-	// Most setup is done in the platform-specific init
+	// Core subsystem setup: FileAccess/DirAccess defaults must be registered
+	// before any file I/O occurs (e.g. ProjectSettings::_load_resource_pack
+	// during Main::setup). initialize_core() sets up HarmonyOS sandbox-aware
+	// FileAccess and DirAccess implementations.
+	initialize_core();
+
 #ifdef HARMONYOS_ENABLED
 	OH_LOG_INFO(LOG_APP, "OS_HarmonyOS::initialize()");
 #endif
