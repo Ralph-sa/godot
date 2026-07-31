@@ -379,6 +379,7 @@ export struct ProjectSelector {
                 .width(24).height(24).margin({ right: 12 })
               Text('Open Project')
                 .fontSize(16).fontWeight(FontWeight.Medium)
+                .fontColor('#FFFFFF')
             }
           }
           .width('100%').height(48)
@@ -392,6 +393,7 @@ export struct ProjectSelector {
                 .width(24).height(24).margin({ right: 12 })
               Text('New Project')
                 .fontSize(16).fontWeight(FontWeight.Medium)
+                .fontColor('#E0E0E0')
             }
           }
           .width('100%').height(48)
@@ -466,6 +468,9 @@ export struct ProjectSelector {
             .width('100%')
             .height(48)
             .fontSize(16)
+            .fontColor('#FFFFFF')
+            .placeholderColor('#666688')
+            .placeholderFont({ size: 16 })
             .backgroundColor('#2A2A3A')
             .borderRadius(8)
             .padding({ left: 16, right: 16 })
