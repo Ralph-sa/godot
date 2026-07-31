@@ -10,6 +10,10 @@
 #include "crash_handler_harmonyos.h"
 
 #include "main/main.h"
+#include "core/os/main_loop.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/viewport.h"
+#include "scene/main/window.h"
 
 #include "harmonyos_log.h"
 #include <string>
@@ -216,6 +220,24 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_start() {
 	g_engine_started.store(true);
 	OH_LOG_INFO(LOG_APP, "Engine started, entering frame loop");
 
+	// The OS layer is responsible for booting the main loop before iterating it
+	// (see OS_Windows::run() / OS_LinuxBSD::run() calling main_loop->initialize()).
+	// HarmonyOS has no run(); without this call SceneTree::initialize() never
+	// runs, the SceneTree root Window never enters the scene tree, its window_id
+	// stays INVALID_WINDOW_ID, the rect-changed callback is never registered and
+	// the root viewport is never attached to the screen — the engine draws into a
+	// void and the screen stays black. Initialize the main loop here to mirror
+	// the desktop platforms.
+	{
+		MainLoop *ml = OS::get_singleton()->get_main_loop();
+		if (ml) {
+			ml->initialize();
+			OH_LOG_INFO(LOG_APP, "[INIT STEP 17/17] main loop initialized");
+		} else {
+			OH_LOG_ERROR(LOG_APP, "[INIT STEP 17/17] no main loop to initialize");
+		}
+	}
+
 	// Frame loop — mirrors OS_Windows::run()'s Main::iteration() loop.
 	// All engine iteration happens on this single engine thread.
 	int frame_count = 0;
@@ -257,6 +279,34 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_start() {
 		if (frame_count < 5 || (frame_count % 300) == 0) {
 			OH_LOG_INFO(LOG_APP, "[frame] %{public}d begin (frames_drawn=%{public}llu)", frame_count,
 					(unsigned long long)Engine::get_singleton()->get_frames_drawn());
+		}
+
+		// The XComponent surface is created before Main::start() on the JS/NAPI
+		// thread, so update_window_size() fires the rect-changed callback before
+		// the root Window registered it (rect_changed_callback.is_valid() == false).
+		// The engine then keeps the 0x0 initial window size forever, the viewport
+		// never gets a valid size, draw_viewports() skips every viewport and the
+		// screen stays black. Re-fire the size notification once the engine thread
+		// owns the frame loop so the callback reaches the root Window.
+		if (frame_count == 0) {
+			DisplayServerHarmonyOS *dsp = DisplayServerHarmonyOS::get_singleton();
+			if (dsp) {
+				Size2i sz = dsp->get_window_size();
+				dsp->notify_surface_changed(sz.width, sz.height);
+				OH_LOG_INFO(LOG_APP, "[frame] re-fired surface size %{public}dx%{public}d", sz.width, sz.height);
+			}
+			MainLoop *ml = OS::get_singleton()->get_main_loop();
+			if (ml) {
+				SceneTree *st = Object::cast_to<SceneTree>(ml);
+				if (st) {
+					Window *root_win = st->get_root();
+					if (root_win) {
+						OH_LOG_INFO(LOG_APP, "[frame] root window id=%{public}d size=%{public}dx%{public}d visible=%{public}d",
+								(int)root_win->get_window_id(), (int)root_win->get_size().width,
+								(int)root_win->get_size().height, (int)root_win->is_visible());
+					}
+				}
+			}
 		}
 
 		// The editor enables low-processor mode (OS::set_low_processor_usage_mode(true))
