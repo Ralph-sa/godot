@@ -14,6 +14,7 @@ const DOMAIN = 0x0000;
 @ComponentV2
 export struct GodotSurface {
   @Local surfaceId: string = '';
+  private xcController: XComponentController = new XComponentController();
   private lastMouseX: number = 0;
   private lastMouseY: number = 0;
 
@@ -142,22 +143,24 @@ export struct GodotSurface {
       XComponent({
         id: this.surfaceId,
         type: XComponentType.SURFACE,
-        libraryname: 'godot_napi'
+        controller: this.xcController
       })
         .width('100%')
         .height('100%')
         .backgroundColor(Color.Black)
         .focusable(true)
         .focusOnTouch(true)
-        .onLoad((context?: object) => {
+        .onLoad(() => {
           hilog.info(DOMAIN, TAG, '[INIT STEP 16/16] XComponent onLoad: ' + this.surfaceId);
           try {
-            if (context) {
-              // Hand the native context to NAPI so it can resolve the
-              // OH_NativeXComponent handle and register surface callbacks.
-              godot_napi.initXComponent(context);
-            }
-            godot_napi.onSurfaceCreated(this.surfaceId);
+            // ArkTS XComponent scenario: obtain the numeric surface id from the
+            // controller and hand it to native. The native side creates the
+            // OHNativeWindow directly from this id, which is more reliable than
+            // the libraryname injection (the module was already loaded by the
+            // ArkTS import, so OH_NATIVE_XCOMPONENT_OBJ is never injected).
+            const sid: string = this.xcController.getXComponentSurfaceId();
+            hilog.info(DOMAIN, TAG, '[INIT STEP 16/16] surfaceId=' + sid);
+            godot_napi.onSurfaceCreated(sid);
           } catch (e) {
             hilog.error(DOMAIN, TAG, 'NAPI surface created error: ' + e);
           }

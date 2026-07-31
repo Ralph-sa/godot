@@ -6,14 +6,20 @@
 /**************************************************************************/
 
 #include <napi/native_api.h>
+
+// hilog/log.h falls back to LOG_TAG = NULL when the including file has not
+// defined it, and OH_LOG_Print discards records with a NULL tag — so these
+// must be set before the SDK header is pulled in, or nothing this file logs
+// ever reaches the hilog buffer.
+#define LOG_DOMAIN 0x0000
+#define LOG_TAG "GodotNAPI"
+
 #include <hilog/log.h>
 #include <ace/xcomponent/native_interface_xcomponent.h>
 #include <dlfcn.h>
 #include <pthread.h>
 #include <atomic>
 #include <string>
-
-#define TAG "GodotNAPI"
 
 typedef int (*godot_init_t)();
 typedef void (*godot_start_t)();
@@ -45,10 +51,13 @@ static godot_on_back_press_t g_on_back_press_func = nullptr;
 static napi_ref g_title_callback_ref = nullptr;
 static napi_env g_title_callback_env = nullptr;
 
-// The XComponent native handle captured from the ArkTS onLoad context via
-// OH_NativeXComponent_GetNativeXComponent. Consumed by libgodot.so through
-// harmonyos_get_xcomponent() (weak symbol in the engine).
+// The XComponent native handle, captured at module init from the exports
+// object's OH_NATIVE_XCOMPONENT_OBJ property. The XComponent `libraryname`
+// mechanism injects this property into the module's exports when the
+// component is created on the ArkTS side.
 static OH_NativeXComponent *g_xcomponent = nullptr;
+static napi_ref g_module_exports_ref = nullptr;
+static napi_env g_module_env = nullptr;
 
 // ---- Async init ----
 static std::atomic<int> g_init_status{-1};
@@ -138,31 +147,38 @@ static napi_value NAPI_OnSurfaceCreated(napi_env env, napi_callback_info info) {
 	napi_value r; napi_create_int32(env, s, &r); return r;
 }
 
-// Called from ArkTS XComponent.onLoad with the native context object.
-// Captures the OH_NativeXComponent handle for the engine to register its
-// surface callbacks (OnSurfaceCreated etc.).
-static napi_value NAPI_InitXComponent(napi_env env, napi_callback_info info) {
-	size_t argc = 1; napi_value args[1];
-	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-	if (argc < 1) {
-		napi_value r; napi_create_int32(env, -1, &r); return r;
+// Attempt to capture the OH_NativeXComponent from the module exports object.
+// Returns true on success.
+static bool capture_xcomponent(napi_env env) {
+	if (g_xcomponent != nullptr) {
+		return true;
 	}
-	napi_valuetype type;
-	napi_typeof(env, args[0], &type);
-	if (type != napi_object) {
-		napi_value r; napi_create_int32(env, -1, &r); return r;
+	if (g_module_exports_ref == nullptr) {
+		return false;
 	}
-
+	napi_value exports = nullptr;
+	if (napi_get_reference_value(env, g_module_exports_ref, &exports) != napi_ok || exports == nullptr) {
+		return false;
+	}
+	napi_value export_instance = nullptr;
+	if (napi_get_named_property(env, exports, OH_NATIVE_XCOMPONENT_OBJ, &export_instance) != napi_ok) {
+		return false;
+	}
 	OH_NativeXComponent *xcomponent = nullptr;
-	int32_t ret = OH_NativeXComponent_GetNativeXComponent(env, args[0], &xcomponent);
-	if (ret != 0 || xcomponent == nullptr) {
-		OH_LOG_ERROR(LOG_APP, "initXComponent: OH_NativeXComponent_GetNativeXComponent failed (%{public}d)", ret);
-		napi_value r; napi_create_int32(env, -1, &r); return r;
+	if (napi_unwrap(env, export_instance, reinterpret_cast<void **>(&xcomponent)) != napi_ok || xcomponent == nullptr) {
+		return false;
 	}
-
 	g_xcomponent = xcomponent;
-	OH_LOG_INFO(LOG_APP, "initXComponent: captured native XComponent");
-	napi_value r; napi_create_int32(env, 0, &r); return r;
+	OH_LOG_INFO(LOG_APP, "capture_xcomponent: captured native XComponent from exports");
+	return true;
+}
+
+// Called from ArkTS XComponent.onLoad. The `libraryname` mechanism normally
+// injects the OH_NativeXComponent into the module exports at init time; this
+// is a fallback retry in case the injection happens later (onLoad ordering).
+static napi_value NAPI_InitXComponent(napi_env env, napi_callback_info info) {
+	capture_xcomponent(env);
+	napi_value r; napi_create_int32(env, g_xcomponent ? 0 : -1, &r); return r;
 }
 
 extern "C" OH_NativeXComponent *harmonyos_get_xcomponent() {
@@ -239,6 +255,18 @@ extern "C" void harmonyos_notify_window_title(const char *title) {
 
 EXTERN_C_START
 static napi_value GodotModuleInit(napi_env env, napi_value exports) {
+	// Keep a reference to the exports object so onLoad can retry the
+	// XComponent capture if it wasn't injected yet at module init time.
+	g_module_env = env;
+	if (g_module_exports_ref == nullptr) {
+		napi_create_reference(env, exports, 1, &g_module_exports_ref);
+	}
+	if (capture_xcomponent(env)) {
+		OH_LOG_INFO(LOG_APP, "GodotModuleInit: native XComponent captured at init");
+	} else {
+		OH_LOG_INFO(LOG_APP, "GodotModuleInit: XComponent not yet available, will retry on onLoad");
+	}
+
 	napi_value o; napi_create_object(env, &o);
 	napi_property_descriptor d[] = {
 		{"loadLibrary", nullptr, NAPI_LoadLibrary, nullptr, nullptr, nullptr, napi_default, nullptr},

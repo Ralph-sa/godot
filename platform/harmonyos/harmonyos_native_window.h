@@ -8,7 +8,7 @@
 
 #include <ace/xcomponent/native_interface_xcomponent.h>
 #include <native_window/external_window.h>
-#include <hilog/log.h>
+#include "harmonyos_log.h"
 
 class HarmonyOSNativeWindow {
 public:
@@ -19,6 +19,12 @@ public:
 
 	// Called from NAPI bridge when ArkTS provides the XComponent
 	bool initialize_with_xcomponent(OH_NativeXComponent *p_xcomponent);
+
+	// Called from NAPI bridge when ArkTS provides the numeric surface id
+	// (ArkTS XComponent scenario). Creates the OHNativeWindow directly from
+	// the surface id, avoiding the dependency on OH_NativeXComponent callbacks
+	// and the libraryname injection mechanism.
+	bool initialize_with_surface_id(uint64_t p_surface_id);
 
 	void destroy();
 

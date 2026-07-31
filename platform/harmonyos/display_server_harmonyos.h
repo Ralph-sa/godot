@@ -5,12 +5,14 @@
 #pragma once
 
 #include "servers/display/display_server.h"
+#include "servers/display/native_menu.h"
 
 class InputEvent;
 class TTS_HarmonyOS;
 
 #ifdef VULKAN_ENABLED
 class RenderingContextDriverVulkanHarmonyOS;
+class RenderingDevice;
 #endif
 
 class HarmonyOSNativeWindow;
@@ -47,6 +49,7 @@ protected:
 	Point2i _window_position = Point2i(0, 0);
 	DisplayServerEnums::WindowMode _window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
 	TTS_HarmonyOS *tts = nullptr;
+	NativeMenu *native_menu = nullptr;
 
 	String _ime_text;
 	Vector2i _ime_selection;
@@ -158,6 +161,11 @@ public:
 	static bool check_vulkan_global_context(bool p_vulkan_requirements_met);
 	static void free_vulkan_global_context();
 	void reset_window();
+#endif
+
+private:
+#ifdef VULKAN_ENABLED
+	RenderingDevice *rendering_device = nullptr;
 #endif
 
 	DisplayServerHarmonyOS(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, DisplayServerEnums::Context p_context, int64_t p_parent_window, Error &r_error);

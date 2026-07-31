@@ -14,6 +14,7 @@
 // with Godot's bundled vulkan headers (VK_NO_PROTOTYPES is set by volk).
 #include "vulkan_ohos_surface.h"
 #include "harmonyos_native_window.h"
+#include "harmonyos_log.h"
 
 const char *RenderingContextDriverVulkanHarmonyOS::_get_platform_surface_extension() const {
 	return VK_OHOS_SURFACE_EXTENSION_NAME;
@@ -21,14 +22,21 @@ const char *RenderingContextDriverVulkanHarmonyOS::_get_platform_surface_extensi
 
 RenderingContextDriver::SurfaceID RenderingContextDriverVulkanHarmonyOS::surface_create(const void *p_platform_data) {
 	const WindowPlatformData *wpd = reinterpret_cast<const WindowPlatformData *>(p_platform_data);
-	ERR_FAIL_NULL_V(wpd, SurfaceID());
+	if (!wpd) {
+		OH_LOG_ERROR(LOG_APP, "[VK] surface_create: no platform data");
+		return SurfaceID();
+	}
 
 	// Load vkCreateSurfaceOHOS dynamically (VK_NO_PROTOTYPES is set by volk)
 	PFN_vkCreateSurfaceOHOS vkCreateSurfaceOHOS_func =
 		reinterpret_cast<PFN_vkCreateSurfaceOHOS>(
 			vkGetInstanceProcAddr(instance_get(), "vkCreateSurfaceOHOS"));
-	ERR_FAIL_NULL_V_MSG(vkCreateSurfaceOHOS_func, SurfaceID(),
-		"vkCreateSurfaceOHOS not available");
+	if (!vkCreateSurfaceOHOS_func) {
+		OH_LOG_ERROR(LOG_APP, "[VK] surface_create FAILED: vkCreateSurfaceOHOS not available");
+		return SurfaceID();
+	}
+	OH_LOG_INFO(LOG_APP, "[VK] surface_create: window=%{public}p, vkCreateSurfaceOHOS resolved",
+			wpd->native_window);
 
 	VkSurfaceCreateInfoOHOS create_info = {};
 	create_info.sType = VK_STRUCTURE_TYPE_SURFACE_CREATE_INFO_OHOS;
@@ -39,8 +47,11 @@ RenderingContextDriver::SurfaceID RenderingContextDriverVulkanHarmonyOS::surface
 	VkSurfaceKHR vk_surface = VK_NULL_HANDLE;
 	VkResult err = vkCreateSurfaceOHOS_func(instance_get(), &create_info,
 		get_allocation_callbacks(VK_OBJECT_TYPE_SURFACE_KHR), &vk_surface);
-	ERR_FAIL_COND_V_MSG(err != VK_SUCCESS, SurfaceID(),
-		vformat("Couldn't create OHOS Surface (VkResult error %d).", err));
+	if (err != VK_SUCCESS) {
+		OH_LOG_ERROR(LOG_APP, "[VK] surface_create FAILED: vkCreateSurfaceOHOS err=%{public}d", (int)err);
+		return SurfaceID();
+	}
+	OH_LOG_INFO(LOG_APP, "[VK] surface_create OK: surface=%{public}p", (void *)vk_surface);
 
 	Surface *surface = memnew(Surface);
 	surface->vk_surface = vk_surface;

@@ -14,10 +14,12 @@
 
 #ifdef VULKAN_ENABLED
 #include "rendering_context_driver_vulkan_harmonyos.h"
+#include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
+#include "servers/rendering/rendering_device.h"
 #endif
 
 #ifdef HARMONYOS_ENABLED
-#include <hilog/log.h>
+#include "harmonyos_log.h"
 #endif
 
 #include <atomic>
@@ -32,7 +34,6 @@ DisplayServerHarmonyOS *DisplayServerHarmonyOS::get_singleton() {
 
 bool DisplayServerHarmonyOS::has_feature(DisplayServerEnums::Feature p_feature) const {
 	switch (p_feature) {
-		case DisplayServerEnums::FEATURE_GLOBAL_MENU:
 		case DisplayServerEnums::FEATURE_HIDPI:
 		case DisplayServerEnums::FEATURE_SWAP_BUFFERS:
 		case DisplayServerEnums::FEATURE_KEEP_SCREEN_ON:
@@ -42,6 +43,9 @@ bool DisplayServerHarmonyOS::has_feature(DisplayServerEnums::Feature p_feature) 
 		case DisplayServerEnums::FEATURE_MOUSE:
 		case DisplayServerEnums::FEATURE_TOUCHSCREEN:
 			return true;
+		case DisplayServerEnums::FEATURE_GLOBAL_MENU:
+			// OHOS 无系统全局菜单，NativeMenu 为基础实现（不支持 GLOBAL_MENU）。
+			return native_menu && native_menu->has_feature(NativeMenu::FEATURE_GLOBAL_MENU);
 		// OHOS NDK 当前无 TTS API，FEATURE_TEXT_TO_SPEECH 暂返回 false。
 		// 当 HarmonyOS SDK 提供原生 TTS 接口后，可激活此 feature。
 		case DisplayServerEnums::FEATURE_TEXT_TO_SPEECH:
@@ -400,6 +404,12 @@ bool DisplayServerHarmonyOS::should_swap_buffers() const {
 }
 
 void DisplayServerHarmonyOS::swap_buffers() {
+	// Sampled once per ~60 calls: enough to confirm the render loop is alive
+	// without flooding the log at frame rate.
+	static int swap_counter = 0;
+	if ((swap_counter++ % 60) == 0) {
+		OH_LOG_INFO(LOG_APP, "[DS] swap_buffers called (%{public}d)", swap_counter);
+	}
 	swap_buffers_flag = true;
 }
 
@@ -469,6 +479,9 @@ bool DisplayServerHarmonyOS::check_vulkan_global_context(bool p_vulkan_requireme
 		if (err != OK) {
 			rendering_context_global.store(nullptr, std::memory_order_release);
 			ERR_PRINT("Failed to initialize Vulkan context.");
+			OH_LOG_ERROR(LOG_APP, "[DS] Vulkan context init FAILED err=%{public}d", (int)err);
+		} else {
+			OH_LOG_INFO(LOG_APP, "[DS] Vulkan context init OK");
 		}
 	}
 
@@ -484,29 +497,56 @@ void DisplayServerHarmonyOS::free_vulkan_global_context() {
 }
 
 void DisplayServerHarmonyOS::reset_window() {
+	OH_LOG_INFO(LOG_APP, "[DS] reset_window entry");
 	RenderingContextDriver *ctx = rendering_context_global.load(std::memory_order_acquire);
 	if (ctx) {
 		DisplayServerEnums::VSyncMode last_vsync_mode = ctx->window_get_vsync_mode(window_id);
 		ctx->window_destroy(window_id);
 
 		HarmonyOSNativeWindow *native_win = HarmonyOSNativeWindow::singleton;
-		ERR_FAIL_NULL(native_win);
+		if (!native_win) {
+			OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: no HarmonyOSNativeWindow");
+			return;
+		}
 
 		OHNativeWindow *oh_window = native_win->get_native_window();
-		ERR_FAIL_NULL(oh_window);
+		if (!oh_window) {
+			OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: OHNativeWindow is NULL");
+			return;
+		}
+		OH_LOG_INFO(LOG_APP, "[DS] reset_window: OHNativeWindow=%{public}p size=%{public}dx%{public}d",
+				(void *)oh_window, window_size.width, window_size.height);
 
 		RenderingContextDriverVulkanHarmonyOS::WindowPlatformData wpd;
 		wpd.native_window = oh_window;
 
 		if (ctx->window_create(window_id, &wpd) != OK) {
 			ERR_PRINT("Failed to reset Vulkan window.");
+			OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: window_create error");
 			return;
 		}
+		OH_LOG_INFO(LOG_APP, "[DS] reset_window: window_create OK");
 
 		ctx->window_set_size(window_id, window_size.width, window_size.height);
 		ctx->window_set_vsync_mode(window_id, last_vsync_mode);
+
+		// Create the swap chain for the main window now that the native surface
+		// (OHNativeWindow from the XComponent) is available. The RenderingDevice
+		// was initialized earlier (in the constructor) without a window, so this
+		// is deferred to the surface-created callback.
+		if (rendering_device != nullptr) {
+			Error err = rendering_device->screen_create(DisplayServerEnums::MAIN_WINDOW_ID);
+			if (err != OK) {
+				ERR_PRINT("Failed to create Vulkan swap chain for main window.");
+				OH_LOG_ERROR(LOG_APP, "[DS] reset_window: screen_create FAILED err=%{public}d", (int)err);
+			} else {
+				OH_LOG_INFO(LOG_APP, "[DS] reset_window: screen_create OK");
+			}
+		} else {
+			OH_LOG_ERROR(LOG_APP, "[DS] reset_window: rendering_device is NULL");
+		}
 	} else {
-		OH_LOG_ERROR(LOG_APP, "reset_window: Vulkan context not initialized, cannot create window surface");
+		OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: Vulkan context not initialized, cannot create window surface");
 	}
 }
 #endif // VULKAN_ENABLED
@@ -551,6 +591,46 @@ DisplayServerHarmonyOS::DisplayServerHarmonyOS(const String &p_rendering_driver,
 	// TTS framework stub — OHOS NDK 当前无 TTS API，预留框架供未来对接。
 	tts = memnew(TTS_HarmonyOS);
 
+	// NativeMenu 基础实现：OHOS 无全局菜单 API，全部功能返回默认值（false/空）。
+	// 必须实例化以设置 NativeMenu::singleton，否则编辑器代码中对
+	// NativeMenu::get_singleton() 的解引用会因空指针而崩溃。
+	// 参照 LinuxBSD（display_server_x11.cpp:6837）的做法。
+	native_menu = memnew(NativeMenu);
+
+#if defined(VULKAN_ENABLED) && defined(RD_ENABLED)
+	// Initialize the Vulkan context and RenderingDevice as early as possible,
+	// mirroring DisplayServerWindows. Main::setup2() creates the
+	// RenderingServer right after this constructor returns, and
+	// RenderingServerDefault::_init() calls RendererCompositor::create(),
+	// which requires RendererCompositorRD::make_current() to have run (it
+	// installs the _create_func used by RendererCompositor::create()).
+	//
+	// The XComponent surface (OHNativeWindow) does not exist yet at this
+	// point, so the RenderingDevice is initialized without a main window
+	// (INVALID_WINDOW_ID). The swap chain is created later in reset_window()
+	// once the surface is available.
+	if (check_vulkan_global_context(true)) {
+		RenderingContextDriver *ctx = rendering_context_global.load(std::memory_order_acquire);
+		if (ctx) {
+			rendering_device = memnew(RenderingDevice);
+			if (rendering_device->initialize(ctx, DisplayServerEnums::INVALID_WINDOW_ID) == OK) {
+				RendererCompositorRD::make_current();
+				OH_LOG_INFO(LOG_APP, "[DS] ctor: RenderingDevice init OK, make_current done");
+			} else {
+				memdelete(rendering_device);
+				rendering_device = nullptr;
+				ERR_PRINT("Failed to initialize RenderingDevice (Vulkan).");
+				OH_LOG_ERROR(LOG_APP, "[DS] ctor: RenderingDevice init FAILED");
+			}
+		} else {
+			OH_LOG_ERROR(LOG_APP, "[DS] ctor: Vulkan ctx null after check");
+		}
+	} else {
+		ERR_PRINT("Failed to initialize Vulkan context.");
+		OH_LOG_ERROR(LOG_APP, "[DS] ctor: check_vulkan_global_context FAILED");
+	}
+#endif
+
 	// Rendering context and device are initialized separately
 	// through check_vulkan_global_context() and reset_window()
 	// after the surface becomes available.
@@ -569,4 +649,17 @@ DisplayServerHarmonyOS::~DisplayServerHarmonyOS() {
 		memdelete(tts);
 		tts = nullptr;
 	}
+
+	if (native_menu) {
+		memdelete(native_menu);
+		native_menu = nullptr;
+	}
+
+#if defined(VULKAN_ENABLED) && defined(RD_ENABLED)
+	if (rendering_device) {
+		memdelete(rendering_device);
+		rendering_device = nullptr;
+	}
+	free_vulkan_global_context();
+#endif
 }

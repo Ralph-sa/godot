@@ -30,15 +30,41 @@ bool HarmonyOSNativeWindow::initialize_with_xcomponent(OH_NativeXComponent *p_xc
 	return true;
 }
 
+bool HarmonyOSNativeWindow::initialize_with_surface_id(uint64_t p_surface_id) {
+	if (native_window_) {
+		OH_NativeWindow_DestroyNativeWindow(native_window_);
+		native_window_ = nullptr;
+	}
+
+	int32_t ret = OH_NativeWindow_CreateNativeWindowFromSurfaceId(p_surface_id, &native_window_);
+	if (ret != 0 || !native_window_) {
+		OH_LOG_ERROR(LOG_APP, "[XComponent] CreateNativeWindowFromSurfaceId failed for id %{public}llu, ret=%{public}d",
+				(unsigned long long)p_surface_id, ret);
+		surface_ready_ = false;
+		return false;
+	}
+
+	surface_ready_ = true;
+	OH_LOG_INFO(LOG_APP, "[XComponent] native window created from surface id: %{public}llu",
+			(unsigned long long)p_surface_id);
+	return true;
+}
+
 void HarmonyOSNativeWindow::destroy() {
-	native_window_ = nullptr;
+	if (native_window_) {
+		OH_NativeWindow_DestroyNativeWindow(native_window_);
+		native_window_ = nullptr;
+	}
 	native_xcomponent_ = nullptr;
 	surface_ready_ = false;
 	OH_LOG_INFO(LOG_APP, "XComponent destroyed");
 }
 
 void HarmonyOSNativeWindow::OnSurfaceCreated_CB(OH_NativeXComponent *component, void *window) {
+	OH_LOG_INFO(LOG_APP, "[XComponent] OnSurfaceCreated_CB entry window=%{public}p", window);
 	if (!singleton || !window) {
+		OH_LOG_WARN(LOG_APP, "[XComponent] OnSurfaceCreated_CB ignored (singleton=%{public}p window=%{public}p)",
+				(void *)singleton, window);
 		return;
 	}
 
@@ -49,6 +75,8 @@ void HarmonyOSNativeWindow::OnSurfaceCreated_CB(OH_NativeXComponent *component, 
 	// Get initial dimensions
 	uint64_t w = 0, h = 0;
 	int32_t ret = OH_NativeXComponent_GetXComponentSize(component, window, &w, &h);
+	OH_LOG_INFO(LOG_APP, "[XComponent] OnSurfaceCreated_CB size ret=%{public}d w=%{public}llu h=%{public}llu",
+			(int)ret, (unsigned long long)w, (unsigned long long)h);
 	if (ret == 0) {
 		singleton->width_ = w;
 		singleton->height_ = h;
@@ -63,7 +91,7 @@ void HarmonyOSNativeWindow::OnSurfaceCreated_CB(OH_NativeXComponent *component, 
 
 	singleton->surface_ready_ = true;
 
-	OH_LOG_INFO(LOG_APP, "Surface ready: %{public}llux%{public}llu",
+	OH_LOG_INFO(LOG_APP, "[XComponent] surface ready: %{public}llux%{public}llu",
 		(unsigned long long)singleton->width_,
 		(unsigned long long)singleton->height_);
 }
@@ -77,6 +105,8 @@ void HarmonyOSNativeWindow::OnSurfaceChanged_CB(OH_NativeXComponent *component, 
 	OH_NativeXComponent_GetXComponentSize(component, window, &w, &h);
 	singleton->width_ = w;
 	singleton->height_ = h;
+	OH_LOG_INFO(LOG_APP, "[XComponent] OnSurfaceChanged_CB: %{public}llux%{public}llu",
+			(unsigned long long)w, (unsigned long long)h);
 
 	// Forward size change to DisplayServer.
 	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();

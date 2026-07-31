@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #ifdef HARMONYOS_ENABLED
-#include <hilog/log.h>
+#include "harmonyos_log.h"
 #endif
 
 String DirAccessHarmonyOS::sandbox_root;

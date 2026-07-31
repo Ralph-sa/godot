@@ -11,7 +11,7 @@
 #include "core/input/input_event.h"
 
 #include <cstring>
-#include <hilog/log.h>
+#include "harmonyos_log.h"
 #include <atomic>
 
 namespace HarmonyOSInput {

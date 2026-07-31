@@ -15,7 +15,7 @@
 #include "main/main.h"
 
 #ifdef HARMONYOS_ENABLED
-#include <hilog/log.h>
+#include "harmonyos_log.h"
 #endif
 
 #include <cxxabi.h>

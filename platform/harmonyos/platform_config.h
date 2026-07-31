@@ -31,5 +31,5 @@
 #pragma once
 
 #ifdef HARMONYOS_ENABLED
-#include <hilog/log.h>
+#include "harmonyos_log.h"
 #endif

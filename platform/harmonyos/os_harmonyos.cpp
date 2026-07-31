@@ -18,7 +18,7 @@
 #include <unistd.h>
 
 #ifdef HARMONYOS_ENABLED
-#include <hilog/log.h>
+#include "harmonyos_log.h"
 #endif
 
 String OS_HarmonyOS::get_name() const {

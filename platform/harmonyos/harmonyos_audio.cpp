@@ -4,7 +4,7 @@
 
 #include "harmonyos_audio.h"
 
-#include <hilog/log.h>
+#include "harmonyos_log.h"
 #include <cstring>
 
 // ---- Constants ----
