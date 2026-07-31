@@ -1,7 +1,9 @@
+import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GodotSurface } from '../components/GodotSurface';
 import { ProjectSelector } from '../components/ProjectSelector';
 import { GodotEditorVM } from '../viewmodel/GodotEditorVM';
+import { AutoTestMode } from '../model/AutoTestMode';
 
 const TAG = 'GodotEditorPage';
 const DOMAIN = 0x0000;
@@ -13,6 +15,9 @@ const DOMAIN = 0x0000;
  * 1. Show ProjectSelector - user selects or creates a project.
  * 2. Initialize Godot engine with the selected project path.
  * 3. Display GodotSurface (Vulkan rendering surface).
+ *
+ * Step 1 is skipped when the app was launched in auto-test mode, since an
+ * automated run has no way to answer the selector prompt.
  */
 @Entry
 @ComponentV2
@@ -23,6 +28,24 @@ struct GodotEditorPage {
 
   aboutToAppear(): void {
     hilog.info(DOMAIN, TAG, 'GodotEditorPage aboutToAppear');
+    if (AutoTestMode.isEnabled()) {
+      this.startAutoTestRun();
+    }
+  }
+
+  /**
+   * Boots straight into a sandbox project so a smoke test can reach the engine
+   * without UI interaction.
+   */
+  private startAutoTestRun(): void {
+    let ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    let path: string = AutoTestMode.ensureTestProject(ctx.filesDir);
+    if (path.length === 0) {
+      hilog.error(DOMAIN, TAG, 'AUTOTEST: failed to prepare project, falling back to selector');
+      return;
+    }
+    hilog.info(DOMAIN, TAG, `AUTOTEST: bypassing selector, project: ${path}`);
+    this.onProjectSelected(path);
   }
 
   aboutToDisappear(): void {
