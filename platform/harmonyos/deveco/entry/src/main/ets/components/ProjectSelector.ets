@@ -316,55 +316,10 @@ export struct ProjectSelector {
   }
 
   build() {
-    Column() {
-      // New Project Dialog (modal)
-      if (this.showNewProjectDialog) {
-        Column() {
-          Text('New Project')
-            .fontSize(22)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#FFFFFF')
-            .margin({ bottom: 20 })
-
-          TextInput({ text: $$this.newProjectName, placeholder: 'Enter project name...' })
-            .width('100%')
-            .height(48)
-            .fontSize(16)
-            .backgroundColor('#2A2A3A')
-            .borderRadius(8)
-            .padding({ left: 16, right: 16 })
-            .margin({ bottom: 20 })
-
-          Row() {
-            Button('Cancel')
-              .width(100)
-              .height(40)
-              .backgroundColor('#444455')
-              .fontColor('#CCCCCC')
-              .borderRadius(6)
-              .onClick(() => this.cancelNewProject())
-
-            Blank().width(16)
-
-            Button('Create')
-              .width(100)
-              .height(40)
-              .backgroundColor('#FF6B6B')
-              .fontColor('#FFFFFF')
-              .borderRadius(6)
-              .onClick(() => this.confirmNewProject())
-          }
-        }
-        .width(340)
-        .padding(24)
-        .backgroundColor('#1E1E2E')
-        .borderRadius(12)
-        .shadow({ radius: 20, color: '#00000066' })
-        .position({ x: '50%', y: '30%' })
-        .translate({ x: '-50%', y: '0%' })
-      }
-
-      // Header
+    Stack() {
+      // Layer 1: Main content
+      Column() {
+        // Header
       Row() {
         Text('Godot Editor')
           .fontSize(28)
@@ -444,9 +399,61 @@ export struct ProjectSelector {
         .width('100%').constraintSize({ maxWidth: 500 })
         .padding({ left: 16, right: 16 })
       }
+      }
+      .width('100%').height('100%')
+      .backgroundColor('#1E1E2E')
+      .justifyContent(FlexAlign.Center)
+
+      // Layer 2 + 3: Modal overlay (backdrop + dialog)
+      if (this.showNewProjectDialog) {
+        // Backdrop — blocks clicks to layer 1
+        Column()
+          .width('100%').height('100%')
+          .backgroundColor('#00000088')
+          .onClick(() => { /* absorb clicks, do nothing */ })
+          .alignItems(HorizontalAlign.Center)
+          .justifyContent(FlexAlign.Center)
+
+        // Dialog — centered on top of backdrop
+        Column() {
+          Text('New Project')
+            .fontSize(22)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#FFFFFF')
+            .margin({ bottom: 20 })
+
+          TextInput({ text: $$this.newProjectName, placeholder: 'Enter project name...' })
+            .width('100%')
+            .height(48)
+            .fontSize(16)
+            .backgroundColor('#2A2A3A')
+            .borderRadius(8)
+            .padding({ left: 16, right: 16 })
+            .margin({ bottom: 20 })
+
+          Row() {
+            Button('Cancel')
+              .width(100).height(40)
+              .backgroundColor('#444455').fontColor('#CCCCCC')
+              .borderRadius(6)
+              .onClick(() => this.cancelNewProject())
+
+            Blank().width(16)
+
+            Button('Create')
+              .width(100).height(40)
+              .backgroundColor('#FF6B6B').fontColor('#FFFFFF')
+              .borderRadius(6)
+              .onClick(() => this.confirmNewProject())
+          }
+        }
+        .width(340)
+        .padding(24)
+        .backgroundColor('#2A2A3C')
+        .borderRadius(12)
+        .shadow({ radius: 20, color: '#00000066' })
+      }
     }
     .width('100%').height('100%')
-    .backgroundColor('#1E1E2E')
-    .justifyContent(FlexAlign.Center)
   }
 }
