@@ -4,6 +4,7 @@ import { ProjectSelector } from '../components/ProjectSelector';
 import { GodotEditorVM } from '../viewmodel/GodotEditorVM';
 
 const TAG = 'GodotEditorPage';
+const DOMAIN = 0x0000;
 
 /**
  * Main Godot Editor page.
@@ -21,11 +22,11 @@ struct GodotEditorPage {
   @Local projectPath: string = '';
 
   aboutToAppear(): void {
-    hilog.info(0x0000, TAG, 'GodotEditorPage aboutToAppear');
+    hilog.info(DOMAIN, TAG, 'GodotEditorPage aboutToAppear');
   }
 
   aboutToDisappear(): void {
-    hilog.info(0x0000, TAG, 'GodotEditorPage aboutToDisappear');
+    hilog.info(DOMAIN, TAG, 'GodotEditorPage aboutToDisappear');
     this.viewModel.cleanupEngine();
   }
 
@@ -33,7 +34,7 @@ struct GodotEditorPage {
    * Called when user selects a project from the ProjectSelector.
    */
   onProjectSelected = (path: string): void => {
-    hilog.info(0x0000, TAG, `Project selected: ${path}`);
+    hilog.info(DOMAIN, TAG, `Project selected: ${path}`);
     this.projectPath = path;
     this.projectSelected = true;
     this.viewModel.initEngine(path);

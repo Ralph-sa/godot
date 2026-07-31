@@ -21,6 +21,11 @@
         "startWindowIcon": "$media:app_icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
+        "supportWindowMode": ["fullscreen", "floating", "split"],
+        "maxWindowRatio": 0,
+        "minWindowRatio": 0,
+        "minWindowWidth": 640,
+        "minWindowHeight": 480,
         "skills": [
           {
             "entities": [

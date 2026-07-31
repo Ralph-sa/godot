@@ -5,7 +5,11 @@
  * for Godot's Vulkan renderer. Forwards keyboard, mouse, and touch
  * input events to the NAPI bridge, and manages the XComponent lifecycle.
  */
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { godot_napi } from 'libgodot_napi.so';
+
+const TAG = 'GodotSurface';
+const DOMAIN = 0x0000;
 
 @ComponentV2
 export struct GodotSurface {
@@ -15,15 +19,15 @@ export struct GodotSurface {
 
   aboutToAppear(): void {
     this.surfaceId = 'godot_surface_' + Date.now().toString();
-    console.info('[GodotSurface] Creating surface:', this.surfaceId);
+    hilog.info(DOMAIN, TAG, 'Creating surface: ' + this.surfaceId);
   }
 
   aboutToDisappear(): void {
-    console.info('[GodotSurface] Destroying surface:', this.surfaceId);
+    hilog.info(DOMAIN, TAG, 'Destroying surface: ' + this.surfaceId);
     try {
       godot_napi.onSurfaceDestroy();
     } catch (e) {
-      console.error('[GodotSurface] NAPI surface destroy error:', e);
+      hilog.error(DOMAIN, TAG, 'NAPI surface destroy error: ' + e);
     }
   }
 
@@ -38,7 +42,7 @@ export struct GodotSurface {
       godot_napi.sendKeyEvent(event.keyCode, event.type === KeyType.Down ? 0 : 1,
         event.keyText ?? '');
     } catch (e) {
-      console.error('[GodotSurface] Key event error:', e);
+      hilog.error(DOMAIN, TAG, 'Key event error: ' + e);
     }
   }
 
@@ -76,7 +80,7 @@ export struct GodotSurface {
     try {
       godot_napi.sendMouseEvent(button, action, x, y, offsetX, offsetY);
     } catch (e) {
-      console.error('[GodotSurface] Mouse event error:', e);
+      hilog.error(DOMAIN, TAG, 'Mouse event error: ' + e);
     }
   }
 
@@ -111,7 +115,7 @@ export struct GodotSurface {
       try {
         godot_napi.sendTouchEvent(t.id, action, t.x, t.y);
       } catch (e) {
-        console.error('[GodotSurface] Touch event error:', e);
+        hilog.error(DOMAIN, TAG, 'Touch event error: ' + e);
       }
     }
 
@@ -132,19 +136,19 @@ export struct GodotSurface {
         .focusable(true)
         .focusOnTouch(true)
         .onLoad(() => {
-          console.info('[GodotSurface] XComponent onLoad:', this.surfaceId);
+          hilog.info(DOMAIN, TAG, 'XComponent onLoad: ' + this.surfaceId);
           try {
             godot_napi.onSurfaceCreated(this.surfaceId);
           } catch (e) {
-            console.error('[GodotSurface] NAPI surface created error:', e);
+            hilog.error(DOMAIN, TAG, 'NAPI surface created error: ' + e);
           }
         })
         .onDestroy(() => {
-          console.info('[GodotSurface] XComponent onDestroy:', this.surfaceId);
+          hilog.info(DOMAIN, TAG, 'XComponent onDestroy: ' + this.surfaceId);
           try {
             godot_napi.onSurfaceDestroy();
           } catch (e) {
-            console.error('[GodotSurface] NAPI surface destroy error:', e);
+            hilog.error(DOMAIN, TAG, 'NAPI surface destroy error: ' + e);
           }
         })
         .onKeyEvent((event: KeyEvent) => {
