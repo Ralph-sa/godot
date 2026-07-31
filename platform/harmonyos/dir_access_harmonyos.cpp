@@ -11,7 +11,42 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef HARMONYOS_ENABLED
+#include <hilog/log.h>
+#endif
+
 String DirAccessHarmonyOS::sandbox_root;
+
+/// If p_path is outside the OHOS sandbox, extract the last path component
+/// (project / folder name) and redirect it under the sandbox user data dir.
+/// Returns the remapped path, or the original path if already in sandbox.
+static String _remap_to_sandbox(const String &p_path) {
+	String fixed = p_path.simplify_path();
+
+	// Already in sandbox — no change needed
+	if (DirAccessHarmonyOS::is_sandbox_path(fixed)) {
+		return fixed;
+	}
+
+	// Extract the last meaningful component as the project name
+	String project_name = fixed.get_file();
+	if (project_name.is_empty() || project_name == "." || project_name == ".." || project_name == "/") {
+		// Fallback: use a static counter.  We cannot rely on OS::get_singleton()
+		// because this may be called before engine initialization.
+		static uint32_t fallback_id = 0;
+		project_name = "project_" + String::num_uint64(++fallback_id);
+	}
+
+	String sandbox_dir = DirAccessHarmonyOS::get_sandbox_root();
+	String remapped = sandbox_dir.path_join(project_name);
+
+#ifdef HARMONYOS_ENABLED
+	OH_LOG_INFO(LOG_APP, "DirAccessHarmonyOS: remapped %{public}s → %{public}s",
+			fixed.utf8().get_data(), remapped.utf8().get_data());
+#endif
+
+	return remapped;
+}
 
 bool DirAccessHarmonyOS::is_sandbox_path(const String &p_path) {
 	// OHOS sandbox base: /data/storage/
@@ -40,32 +75,15 @@ Error DirAccessHarmonyOS::change_dir(String p_dir) {
 
 	String fixed = fix_path(p_dir);
 
-	// Resolve relative paths against current sandbox root
+	// Resolve relative paths against current dir
 	if (!fixed.is_absolute_path()) {
 		fixed = current_dir.path_join(fixed).simplify_path();
 	}
 
-	// Sandbox boundary check: if the target is outside /data/storage/,
-	// the OHOS sandbox may deny access. Delegate to POSIX chdir and
-	// gracefully degrade on failure.
-	bool in_sandbox = is_sandbox_path(fixed);
-
-	// For paths within sandbox, use DirAccessUnix directly
-	Error err = DirAccessUnix::change_dir(p_dir);
-	if (err == OK) {
-		return OK;
-	}
-
-	// If POSIX chdir failed and we're outside the sandbox,
-	// report the appropriate error.
-	if (!in_sandbox) {
-#ifdef HARMONYOS_ENABLED
-		print_verbose(vformat("DirAccessHarmonyOS: access denied to sandbox-external path: %s", fixed));
-#endif
-		return ERR_FILE_NOT_FOUND;
-	}
-
-	return err;
+	// Delegate directly to POSIX — the OHOS kernel enforces sandbox boundaries
+	// at the syscall level, so we don't need a userspace check here.  This
+	// allows read-only navigation to paths the kernel permits (e.g. /system/).
+	return DirAccessUnix::change_dir(p_dir);
 }
 
 Error DirAccessHarmonyOS::make_dir(String p_dir) {
@@ -77,12 +95,11 @@ Error DirAccessHarmonyOS::make_dir(String p_dir) {
 	}
 	resolved = fix_path(resolved);
 
-	if (!is_sandbox_path(resolved)) {
-		ERR_PRINT(vformat("DirAccessHarmonyOS: mkdir denied for sandbox-external path: %s", resolved));
-		return ERR_CANT_CREATE;
-	}
+	// Redirect external paths into the sandbox so the project manager can
+	// create projects from any user-selected location.
+	resolved = _remap_to_sandbox(resolved);
 
-	return DirAccessUnix::make_dir(p_dir);
+	return DirAccessUnix::make_dir(resolved);
 }
 
 Error DirAccessHarmonyOS::make_dir_recursive(const String &p_dir) {
@@ -94,12 +111,10 @@ Error DirAccessHarmonyOS::make_dir_recursive(const String &p_dir) {
 	}
 	resolved = fix_path(resolved);
 
-	if (!is_sandbox_path(resolved)) {
-		ERR_PRINT(vformat("DirAccessHarmonyOS: mkdir_recursive denied for sandbox-external path: %s", resolved));
-		return ERR_CANT_CREATE;
-	}
+	// Redirect external paths into the sandbox (same logic as make_dir).
+	resolved = _remap_to_sandbox(resolved);
 
-	return DirAccessUnix::make_dir_recursive(p_dir);
+	return DirAccessUnix::make_dir_recursive(resolved);
 }
 
 bool DirAccessHarmonyOS::file_exists(String p_file) {
