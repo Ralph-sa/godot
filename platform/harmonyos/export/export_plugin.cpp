@@ -18,20 +18,13 @@
 
 #include "modules/svg/image_loader_svg.h"
 
-Error EditorExportPlatformHarmonyOS::_process_icon(const Ref<EditorExportPreset> &p_preset, const String &p_src_path, const String &p_dst_path) {
-	// TODO: Implement HAP icon processing
-	return OK;
-}
-
-Error EditorExportPlatformHarmonyOS::_add_data(const Ref<EditorExportPreset> &p_preset, const String &p_path) {
-	// TODO: Implement HAP resource embedding
-	return OK;
-}
-
-// HAP export via hvigor (external build tool).
-// The Godot editor generates the project files (.pck, config),
-// then hvigor assembles the final .hap package.
+// _process_icon() and _add_data() used to live here returning OK without doing
+// anything. They had no callers, so all they did was make the export path look
+// implemented. Packaging a HAP needs the DevEco toolchain (hvigor assembles and
+// signs the package), which is a build-time dependency the editor cannot carry.
 Error EditorExportPlatformHarmonyOS::export_project(const Ref<EditorExportPreset> &p_preset, bool p_debug, const String &p_path, BitField<EditorExportPlatform::DebugFlags> p_flags, bool p_notify) {
+	add_message(EXPORT_MESSAGE_ERROR, TTR("Export"),
+			TTR("HarmonyOS export is not implemented yet. A .hap has to be assembled and signed by the DevEco toolchain; build it with the hvigor project under platform/harmonyos/deveco instead."));
 	return ERR_UNAVAILABLE;
 }
 
@@ -107,7 +100,10 @@ String EditorExportPlatformHarmonyOS::get_option_tooltip(int p_index) const {
 }
 
 Error EditorExportPlatformHarmonyOS::run(const Ref<EditorExportPreset> &p_preset, int p_device, BitField<EditorExportPlatform::DebugFlags> p_debug_flags) {
-	// One-click deploy not yet supported on HarmonyOS
+	// One-click deploy would install through hdc, but it can only deploy what
+	// export_project() produces — so it stays unavailable until that works.
+	// get_options_count() returns 0, so no device ever appears in the UI and
+	// this is not reachable from the editor.
 	return ERR_UNAVAILABLE;
 }
 

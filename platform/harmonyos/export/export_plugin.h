@@ -14,8 +14,6 @@ class EditorExportPlatformHarmonyOS : public EditorExportPlatformPC {
 	Ref<ImageTexture> run_icon;
 #endif
 
-	Error _process_icon(const Ref<EditorExportPreset> &p_preset, const String &p_src_path, const String &p_dst_path);
-	Error _add_data(const Ref<EditorExportPreset> &p_preset, const String &p_path);
 
 public:
 	virtual Error export_project(const Ref<EditorExportPreset> &p_preset, bool p_debug, const String &p_path, BitField<EditorExportPlatform::DebugFlags> p_flags = 0, bool p_notify = true) override;

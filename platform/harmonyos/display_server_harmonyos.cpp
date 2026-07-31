@@ -257,7 +257,11 @@ void DisplayServerHarmonyOS::window_set_rect_changed_callback(const Callable &p_
 }
 
 void DisplayServerHarmonyOS::window_set_drop_files_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window) {
-	// Not supported
+	// Deliberately dropped rather than stored: OHOS delivers drops through the
+	// ArkUI node tree (arkui/drag_and_drop.h), which needs an ArkUI_NodeHandle.
+	// The surface here is a declarative ArkTS XComponent with no native node, so
+	// nothing could ever fire the callback. Keeping it would only make the path
+	// look wired up. Implementing this means forwarding onDrop from ArkTS.
 }
 
 void DisplayServerHarmonyOS::send_window_event(DisplayServerEnums::WindowEvent p_event, bool p_deferred) const {
@@ -286,7 +290,7 @@ DisplayServerEnums::WindowID DisplayServerHarmonyOS::get_window_at_screen_positi
 
 void DisplayServerHarmonyOS::window_attach_instance_id(ObjectID p_instance, DisplayServerEnums::WindowID p_window) {
 	OH_LOG_INFO(LOG_APP, "[DS] window_attach_instance_id win=%{public}d obj=%{public}llu",
-			(int)p_window, (unsigned long long)p_instance.id);
+			(int)p_window, (unsigned long long)(uint64_t)p_instance);
 	// Not supported - handled via ArkTS
 }
 

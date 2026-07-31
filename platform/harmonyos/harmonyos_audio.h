@@ -33,11 +33,10 @@ bool pause_audio();
 // Set the audio data callback
 void set_audio_data_callback(AudioDataCallback callback, void *user_data);
 
-// Set master volume (0.0 - 1.0)
-void set_master_volume(float volume);
-
-// Get current master volume
-float get_master_volume();
+// No master volume accessors: Godot's AudioDriver has no such concept — output
+// level is handled by AudioServer's bus system, which is why the Windows WASAPI
+// driver does not expose one either. The stream volume is only touched
+// internally to honour system duck/mute interruption hints.
 
 // Check if audio is currently playing
 bool is_playing();

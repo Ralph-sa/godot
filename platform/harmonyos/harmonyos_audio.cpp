@@ -18,6 +18,9 @@ namespace HarmonyOSAudio {
 static bool g_initialized = false;
 static bool g_playing = false;
 static float g_master_volume = 1.0f;
+// Set when playback was suspended by a system interruption, so that a later
+// RESUME hint only restarts audio the system took away from us.
+static bool g_interrupted = false;
 
 static OH_AudioStreamBuilder *g_builder = nullptr;
 static OH_AudioRenderer *g_renderer = nullptr;
@@ -28,6 +31,10 @@ static int32_t g_buffer_frames = DEFAULT_BUFFER_FRAMES;
 
 static AudioDataCallback g_data_callback = nullptr;
 static void *g_callback_user_data = nullptr;
+
+// The interrupt callback below is defined before these, but needs to drive them.
+bool start_audio();
+bool pause_audio();
 
 // ---- OHAudio Callbacks ----
 
@@ -67,13 +74,52 @@ static int32_t OnInterruptEvent(OH_AudioRenderer *renderer, void *user_data,
     OH_LOG_INFO(LOG_APP, "OHAudio: Interrupt, forceType=%{public}d, hint=%{public}d",
                 static_cast<int>(type), static_cast<int>(hint));
 
-    switch (type) {
-        case AUDIOSTREAM_INTERRUPT_FORCE:
-            // Forced stop — pause audio
-            OH_AudioRenderer_Pause(g_renderer);
+    // The hint says what to do; the force type says who does it. Under FORCE the
+    // system has already acted and we only mirror the state, under SHARE it is
+    // up to us to act. Previously only FORCE was handled and it always paused,
+    // so audio never came back after a phone call.
+    const bool system_already_acted = (type == AUDIOSTREAM_INTERRUPT_FORCE);
+
+    switch (hint) {
+        case AUDIOSTREAM_INTERRUPT_HINT_PAUSE:
+        case AUDIOSTREAM_INTERRUPT_HINT_STOP:
+            if (system_already_acted) {
+                g_playing = false;
+            } else {
+                pause_audio();
+            }
+            g_interrupted = true;
             break;
-        case AUDIOSTREAM_INTERRUPT_SHARE:
-            // Sharing — may need to lower volume
+
+        case AUDIOSTREAM_INTERRUPT_HINT_RESUME:
+            // Only resume what we were forced to abandon: a RESUME hint that
+            // arrives while the app itself stopped playback must not restart it.
+            if (g_interrupted) {
+                g_interrupted = false;
+                start_audio();
+            }
+            break;
+
+        case AUDIOSTREAM_INTERRUPT_HINT_DUCK:
+            if (!system_already_acted && g_renderer) {
+                OH_AudioRenderer_SetVolume(g_renderer, g_master_volume * 0.2f);
+            }
+            break;
+
+        case AUDIOSTREAM_INTERRUPT_HINT_UNDUCK:
+        case AUDIOSTREAM_INTERRUPT_HINT_UNMUTE:
+            if (!system_already_acted && g_renderer) {
+                OH_AudioRenderer_SetVolume(g_renderer, g_master_volume);
+            }
+            break;
+
+        case AUDIOSTREAM_INTERRUPT_HINT_MUTE:
+            if (!system_already_acted && g_renderer) {
+                OH_AudioRenderer_SetVolume(g_renderer, 0.0f);
+            }
+            break;
+
+        case AUDIOSTREAM_INTERRUPT_HINT_NONE:
             break;
     }
 
@@ -231,21 +277,6 @@ bool pause_audio() {
 void set_audio_data_callback(AudioDataCallback callback, void *user_data) {
     g_data_callback = callback;
     g_callback_user_data = user_data;
-}
-
-void set_master_volume(float volume) {
-    if (volume < 0.0f) volume = 0.0f;
-    if (volume > 1.0f) volume = 1.0f;
-    g_master_volume = volume;
-
-    if (g_renderer) {
-        float ohos_volume = volume; // OHAudio volume is 0.0 - 1.0
-        OH_AudioRenderer_SetVolume(g_renderer, ohos_volume);
-    }
-}
-
-float get_master_volume() {
-    return g_master_volume;
 }
 
 bool is_playing() {
