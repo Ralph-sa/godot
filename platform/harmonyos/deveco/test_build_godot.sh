@@ -34,7 +34,7 @@ echo "[2/3] Building libgodot.so..."
 cd "$GODOT_SRC"
 START=$(date +%s)
 
-if scons platform=harmonyos target=editor opengl3=no -j6 2>&1; then
+if scons platform=harmonyos target=editor opengl3=no dev_build=yes -j6 2>&1; then
     DURATION=$(( $(date +%s) - START ))
     echo -e "${GREEN}PASS${NC} Build succeeded in ${DURATION}s"
 else
@@ -43,7 +43,7 @@ else
 fi
 
 # Verify & copy
-GODOT_SO="$GODOT_SRC/bin/libgodot.harmonyos.editor.arm64.so"
+GODOT_SO="$GODOT_SRC/bin/libgodot.harmonyos.editor.dev.arm64.so"
 echo "[3/3] Verifying..."
 file "$GODOT_SO"
 mkdir -p "$ENTRY_LIBS"

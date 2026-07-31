@@ -62,9 +62,15 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 		OH_LOG_INFO(LOG_APP, "OS_HarmonyOS instance created");
 	}
 
-	// Set command-line arguments for Godot Main
+	// Set command-line arguments for Godot Main.
+	// Reserve capacity up-front to avoid std::string move during
+	// vector reallocation. On x86_64 OHOS (libc++), this move can
+	// leave moved-from strings in a state that corrupts heap
+	// metadata, causing a CowData<char32_t> SIGSEGV later in
+	// ProjectSettings::_load_settings_text.
 	std::vector<char *> args;
 	std::vector<std::string> arg_strings;
+	arg_strings.reserve(4);
 	arg_strings.push_back("godot_harmonyos");
 #ifdef TOOLS_ENABLED
 	arg_strings.push_back("--editor");
