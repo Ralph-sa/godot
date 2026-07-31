@@ -1,8 +1,8 @@
 /**
  * GodotEditorVM.ets - MVVM ViewModel for Godot Editor
  *
- * Manages engine lifecycle, application state, and NAPI calls.
- * Architecture: the engine receives the project path at init time.
+ * All heavy init (dlopen + Main::setup) runs on pthread worker.
+ * Main thread polls via await setTimeout (avoids ANR).
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { godot_napi } from 'libgodot_napi.so';
@@ -18,20 +18,46 @@ export class GodotEditorVM {
   @Trace surfaceCreated: boolean = false;
   @Trace projectPath: string = '';
 
-  /**
-   * Initialize the Godot engine with a project path.
-   * @param path Absolute path to the Godot project directory.
-   */
-  initEngine(path: string): void {
+  async initEngine(path: string): Promise<void> {
     this.projectPath = path;
     this.statusMessage = 'Loading project...';
     this.isLoading = true;
 
     hilog.info(DOMAIN, TAG, '[INIT STEP 4/16] initEngine called, project: ' + path);
     try {
-      hilog.info(DOMAIN, TAG, '[INIT STEP 5/16] calling godot_napi.init() — synchronous, blocks main thread');
-      let result: number = godot_napi.init();
-      hilog.info(DOMAIN, TAG, '[INIT STEP 15/16] godot_napi.init returned: ' + result);
+      hilog.info(DOMAIN, TAG, '[INIT STEP 5/16] calling godot_napi.loadLibrary()');
+      let loadResult: number = godot_napi.loadLibrary();
+      hilog.info(DOMAIN, TAG, '[INIT STEP 5/16] loadLibrary returned: ' + loadResult);
+
+      if (loadResult !== 0) {
+        this.isLoading = false;
+        this.statusMessage = 'Failed to start library load';
+        hilog.error(DOMAIN, TAG, '[INIT STEP 5/16] loadLibrary FAILED');
+        return;
+      }
+
+      // Poll with await setTimeout — this works in ArkTS
+      let pollCount: number = 0;
+      let pollStatus: number = 0;
+      while (pollStatus === 0) {
+        await new Promise<void>((resolve: Function) => { setTimeout(resolve, 2000); });
+        pollStatus = godot_napi.isLibraryLoaded();
+        pollCount++;
+        hilog.info(DOMAIN, TAG, '[INIT STEP 7-9/16] Poll #' + pollCount + ' status=' + pollStatus);
+      }
+
+      if (pollStatus < 0) {
+        this.isLoading = false;
+        this.statusMessage = 'Engine init failed';
+        hilog.error(DOMAIN, TAG, '[INIT STEP 7-9/16] Engine init FAILED');
+        return;
+      }
+
+      hilog.info(DOMAIN, TAG, '[INIT STEP 9/16] Init complete after ' + pollCount + ' polls');
+
+      let result: number = godot_napi.startEngine();
+      hilog.info(DOMAIN, TAG, '[INIT STEP 15/16] startEngine returned: ' + result);
+
       if (result === 0) {
         this.isEngineReady = true;
         this.isLoading = false;

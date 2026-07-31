@@ -2,7 +2,7 @@
  * ProjectSelector.ets - Native project manager for Godot HarmonyOS
  *
  * "Open Project" uses system file picker to locate existing projects.
- * "New Project" creates a project directly in the app sandbox.
+ * "New Project" workflow: pick a parent folder → enter project name → create.
  * Adaptive layout: uses constraintSize so UI looks good in both
  * fullscreen and floating-window modes.
  */
@@ -32,6 +32,7 @@ export struct ProjectSelector {
   @Local recentProjects: string[] = [];
   @Local showNewProjectDialog: boolean = false;
   @Local newProjectName: string = '';
+  @Local selectedFolder: string = '';
 
   aboutToAppear(): void {
     hilog.info(DOMAIN, TAG, 'ProjectSelector aboutToAppear');
@@ -179,16 +180,55 @@ export struct ProjectSelector {
     }
   }
 
-  /** ---- New Project Dialog ---- */
+  /** ---- New Project Dialog (folder → name → create) ---- */
+
+  private parseFolderFromUri(uri: string): string {
+    // DocumentViewPicker returns URIs like:
+    //   file://docs/storage/Users/currentUser/Download/somefile.txt
+    // We strip the last path segment to get the parent directory.
+    let path = uri;
+    if (path.startsWith('file://')) {
+      path = path.substring(7);
+    }
+    let lastSlash = path.lastIndexOf('/');
+    if (lastSlash > 0) {
+      path = path.substring(0, lastSlash);
+    }
+    return path;
+  }
 
   private showNewProjectInput(): void {
     hilog.info(DOMAIN, TAG, '[INIT STEP 1/16] Showing new project dialog');
+    this.selectedFolder = this.getSandboxProjectsDir();
     this.newProjectName = '';
     this.showNewProjectDialog = true;
   }
 
+  private browseForNewProjectFolder(): void {
+    hilog.info(DOMAIN, TAG, '[INIT STEP 1/16] Browsing for parent folder');
+    try {
+      let documentPicker = new picker.DocumentViewPicker();
+      let options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+
+      documentPicker.select(options).then((uris: string[]) => {
+        if (uris && uris.length > 0) {
+          let dir = this.parseFolderFromUri(uris[0]);
+          if (dir.length > 0 && fileIo.accessSync(dir)) {
+            this.selectedFolder = dir;
+            hilog.info(DOMAIN, TAG, `[INIT STEP 1/16] Folder changed to: ${this.selectedFolder}`);
+          }
+        }
+      }).catch((err: Error) => {
+        hilog.info(DOMAIN, TAG, `Folder picker cancelled: ${err.message}`);
+      });
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `Browse error: ${e}`);
+    }
+  }
+
   private confirmNewProject(): void {
-    hilog.info(DOMAIN, TAG, '[INIT STEP 2/16] confirmNewProject: "' + this.newProjectName + '"');
+    hilog.info(DOMAIN, TAG, '[INIT STEP 2/16] confirmNewProject: "' + this.newProjectName + '" in ' + this.selectedFolder);
     this.showNewProjectDialog = false;
 
     let name = this.newProjectName.trim();
@@ -198,14 +238,65 @@ export struct ProjectSelector {
       return;
     }
 
-    let projectPath = this.createProjectInSandbox(name);
+    // Sanitize name: replace spaces and special chars
+    let safeName = name.replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/\s+/g, '_');
+    if (safeName.length === 0) {
+      safeName = 'NewProject';
+    }
+
+    let projectPath = this.selectedFolder + '/' + safeName;
+
+    // Try to create at user-selected path
+    try {
+      // Ensure parent dir exists
+      if (!fileIo.accessSync(this.selectedFolder)) {
+        hilog.warn(DOMAIN, TAG, 'Parent folder not accessible, falling back to sandbox');
+        projectPath = this.createProjectInSandbox(safeName);
+      } else {
+        // Create project subdirectory
+        if (fileIo.accessSync(projectPath)) {
+          hilog.warn(DOMAIN, TAG, 'Project directory already exists: ' + projectPath);
+          this.showToast('Project already exists!');
+          return;
+        }
+        fileIo.mkdirSync(projectPath, true);
+        hilog.info(DOMAIN, TAG, '[INIT STEP 2/16] Project dir created: ' + projectPath);
+
+        // Write project.godot
+        let projectConfig: string =
+          '; Engine configuration file.\n' +
+          '; It\'s best edited using the editor UI and not directly,\n' +
+          '; since the parameters that go here are not all obvious.\n' +
+          ';\n' +
+          '; Format:\n' +
+          ';   [section] ; section goes between []\n' +
+          ';   param=value ; assign values to parameters\n' +
+          '\n' +
+          'config_version=5\n' +
+          '\n' +
+          '[application]\n' +
+          '\n' +
+          'config/name="' + safeName + '"\n';
+
+        let projectFile = projectPath + '/project.godot';
+        let fd = fileIo.openSync(projectFile, fileIo.OpenMode.CREATE |
+          fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+        fileIo.writeSync(fd.fd, projectConfig);
+        fileIo.closeSync(fd);
+        hilog.info(DOMAIN, TAG, '[INIT STEP 2/16] project.godot written: ' + projectFile);
+      }
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, `Failed to create at selected path: ${e}. Falling back to sandbox.`);
+      projectPath = this.createProjectInSandbox(safeName);
+    }
+
     if (projectPath.length > 0) {
       this.addRecentProject(projectPath);
       if (this.onProjectSelected) {
         hilog.info(DOMAIN, TAG, '[INIT STEP 3/16] Firing onProjectSelected: ' + projectPath);
         this.onProjectSelected(projectPath);
       }
-      this.showToast('Project created: ' + name);
+      this.showToast('Project created: ' + safeName);
     }
   }
 
@@ -213,6 +304,7 @@ export struct ProjectSelector {
     hilog.info(DOMAIN, TAG, 'New project cancelled');
     this.showNewProjectDialog = false;
     this.newProjectName = '';
+    this.selectedFolder = '';
   }
 
   /** ---- Open Existing Project ---- */
@@ -462,7 +554,39 @@ export struct ProjectSelector {
             .fontSize(22)
             .fontWeight(FontWeight.Bold)
             .fontColor('#FFFFFF')
-            .margin({ bottom: 20 })
+            .margin({ bottom: 16 })
+
+          // Parent folder selection
+          Column() {
+            Text('Parent folder:')
+              .fontSize(11)
+              .fontColor('#666688')
+              .margin({ bottom: 4 })
+
+            Row() {
+              Text(this.selectedFolder)
+                .fontSize(11)
+                .fontColor('#888899')
+                .layoutWeight(1)
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+              Button('Browse...')
+                .height(32)
+                .fontSize(11)
+                .backgroundColor('#444455')
+                .fontColor('#CCCCCC')
+                .borderRadius(4)
+                .padding({ left: 8, right: 8 })
+                .onClick(() => this.browseForNewProjectFolder())
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .backgroundColor('#1E1E30')
+          .borderRadius(6)
+          .padding(10)
+          .margin({ bottom: 16 })
 
           TextInput({ text: $$this.newProjectName, placeholder: 'Enter project name...' })
             .width('100%')

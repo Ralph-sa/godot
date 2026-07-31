@@ -1,18 +1,19 @@
 /**************************************************************************/
 /*  godot_napi_bridge.cpp - Thin NAPI Bridge to libgodot.so               */
 /*                                                                        */
-/*  This module loads libgodot.so at runtime and exposes its              */
-/*  lifecycle and input functions to ArkTS via NAPI.                      */
+/*  MINIMAL TEST: all heavy work (dlopen + init) on pthread.              */
+/*  Polling via atomics, no threadsafe_function (avoids NAPI crash).      */
 /**************************************************************************/
 
 #include <napi/native_api.h>
 #include <hilog/log.h>
 #include <dlfcn.h>
+#include <pthread.h>
+#include <atomic>
 #include <string>
 
 #define TAG "GodotNAPI"
 
-// Function pointer types exported from libgodot.so
 typedef int (*godot_init_t)();
 typedef void (*godot_cleanup_t)();
 typedef int (*godot_surface_created_t)(const char *);
@@ -25,7 +26,6 @@ typedef void (*godot_on_pause_t)();
 typedef void (*godot_on_resume_t)();
 typedef void (*godot_on_back_press_t)();
 
-// Loaded function pointers (initialized lazily)
 static void *g_libgodot = nullptr;
 static godot_init_t g_init_func = nullptr;
 static godot_cleanup_t g_cleanup_func = nullptr;
@@ -39,31 +39,21 @@ static godot_on_pause_t g_on_pause_func = nullptr;
 static godot_on_resume_t g_on_resume_func = nullptr;
 static godot_on_back_press_t g_on_back_press_func = nullptr;
 
-// ArkTS callback references
 static napi_ref g_title_callback_ref = nullptr;
 static napi_env g_title_callback_env = nullptr;
 
+// ---- Async init ----
+static std::atomic<int> g_init_status{-1};
+
 static bool load_libgodot() {
 	if (g_libgodot) return true;
-
-	// Step 7 — dlopen the heavy SO
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 7/16] dlopen libgodot.so START (151MB — may take seconds)");
-
 	g_libgodot = dlopen("libgodot.so", RTLD_NOW | RTLD_GLOBAL);
-
 	if (!g_libgodot) {
 		g_libgodot = dlopen("libgodot.harmonyos.editor.arm64.so", RTLD_NOW | RTLD_GLOBAL);
 	}
-
 	if (!g_libgodot) {
-		const char *err = dlerror();
-		OH_LOG_ERROR(LOG_APP, "[INIT STEP 7/16] FAILED: %{public}s", err ? err : "unknown");
 		return false;
 	}
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 7/16] dlopen DONE");
-
-	// Step 8 — Resolve all 11 function pointers
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 8/16] dlsym function pointers");
 	g_init_func              = (godot_init_t)dlsym(g_libgodot, "harmonyos_godot_init");
 	g_cleanup_func           = (godot_cleanup_t)dlsym(g_libgodot, "harmonyos_godot_cleanup");
 	g_surface_created_func   = (godot_surface_created_t)dlsym(g_libgodot, "harmonyos_godot_surface_created");
@@ -75,287 +65,159 @@ static bool load_libgodot() {
 	g_on_pause_func          = (godot_on_pause_t)dlsym(g_libgodot, "harmonyos_godot_on_pause");
 	g_on_resume_func         = (godot_on_resume_t)dlsym(g_libgodot, "harmonyos_godot_on_resume");
 	g_on_back_press_func     = (godot_on_back_press_t)dlsym(g_libgodot, "harmonyos_godot_on_back_press");
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 8/16] dlsym DONE (11 symbols resolved)");
-
 	return true;
 }
 
-// ---- NAPI Exported Functions ----
-
-static napi_value NAPI_Init(napi_env env, napi_callback_info info) {
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 6/16] NAPI_Init entry");
-
-	if (!load_libgodot()) {
-		OH_LOG_ERROR(LOG_APP, "[INIT STEP 6/16] FAILED — load_libgodot returned false");
-		napi_value result;
-		napi_create_int32(env, -1, &result);
-		return result;
+static void *init_worker(void *) {
+	bool ok = load_libgodot();
+	if (!ok) {
+		g_init_status.store(-2);
+		return nullptr;
 	}
-
-	// Step 9 — Call the engine entry point (harmonyos_godot_init)
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 9/16] calling harmonyos_godot_init");
+	// harmonyos_godot_init on worker thread (avoids ANR on main)
 	int status = g_init_func ? g_init_func() : -1;
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 9/16] harmonyos_godot_init returned: %{public}d", status);
+	g_init_status.store(status);
+	return nullptr;
+}
 
-	napi_value result;
-	napi_create_int32(env, status, &result);
-	return result;
+// ---- NAPI ----
+
+static napi_value NAPI_LoadLibrary(napi_env env, napi_callback_info info) {
+	if (g_init_status.load() >= 0) {
+		napi_value r; napi_create_int32(env, 0, &r); return r;
+	}
+	pthread_t t;
+	pthread_create(&t, nullptr, init_worker, nullptr);
+	pthread_detach(t);
+	napi_value r; napi_create_int32(env, 0, &r); return r;
+}
+
+static napi_value NAPI_IsLibraryLoaded(napi_env env, napi_callback_info info) {
+	int s = g_init_status.load();
+	napi_value r;
+	napi_create_int32(env, s >= 0 ? 1 : (s == -2 ? -1 : 0), &r);
+	return r;
+}
+
+static napi_value NAPI_StartEngine(napi_env env, napi_callback_info info) {
+	int s = g_init_status.load();
+	napi_value r; napi_create_int32(env, s, &r); return r;
 }
 
 static napi_value NAPI_Cleanup(napi_env env, napi_callback_info info) {
-	OH_LOG_INFO(LOG_APP, "NAPI_Cleanup");
-	
 	if (g_cleanup_func) g_cleanup_func();
-	
-	if (g_libgodot) {
-		dlclose(g_libgodot);
-		g_libgodot = nullptr;
-		g_init_func = nullptr;
-	}
-	
-	napi_value result;
-	napi_create_int32(env, 0, &result);
-	return result;
+	if (g_libgodot) { dlclose(g_libgodot); g_libgodot = nullptr; }
+	napi_value r; napi_create_int32(env, 0, &r); return r;
 }
 
 static napi_value NAPI_OnSurfaceCreated(napi_env env, napi_callback_info info) {
-	size_t argc = 1;
-	napi_value args[1];
+	size_t argc = 1; napi_value args[1];
 	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-
-	char surfaceId[256] = {0};
-	size_t len = 0;
-	napi_get_value_string_utf8(env, args[0], surfaceId, sizeof(surfaceId), &len);
-
-	OH_LOG_INFO(LOG_APP, "NAPI_OnSurfaceCreated: %{public}s", surfaceId);
-
-	int status = g_surface_created_func ? g_surface_created_func(surfaceId) : -1;
-	
-	napi_value result;
-	napi_create_int32(env, status, &result);
-	return result;
+	char id[256] = {0}; size_t len;
+	napi_get_value_string_utf8(env, args[0], id, sizeof(id), &len);
+	int s = g_surface_created_func ? g_surface_created_func(id) : -1;
+	napi_value r; napi_create_int32(env, s, &r); return r;
 }
 
 static napi_value NAPI_OnSurfaceDestroy(napi_env env, napi_callback_info info) {
-	OH_LOG_INFO(LOG_APP, "NAPI_OnSurfaceDestroy");
-	
-	int status = g_surface_destroy_func ? g_surface_destroy_func() : -1;
-	
-	napi_value result;
-	napi_create_int32(env, status, &result);
-	return result;
+	int s = g_surface_destroy_func ? g_surface_destroy_func() : -1;
+	napi_value r; napi_create_int32(env, s, &r); return r;
 }
 
 static napi_value NAPI_SendKeyEvent(napi_env env, napi_callback_info info) {
-	if (!g_key_event_func) {
-		napi_value r;
-		napi_create_int32(env, -1, &r);
-		return r;
-	}
-	
-	size_t argc = 3;
-	napi_value args[3];
-	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-
-	int32_t keyCode = 0, eventType = 0;
-	char keyText[64] = {0};
-	napi_get_value_int32(env, args[0], &keyCode);
-	napi_get_value_int32(env, args[1], &eventType);
-	size_t textLen;
-	napi_get_value_string_utf8(env, args[2], keyText, sizeof(keyText), &textLen);
-
-	g_key_event_func(keyCode, eventType, keyText);
-	
-	napi_value result;
-	napi_create_int32(env, 0, &result);
-	return result;
+	if (!g_key_event_func) { napi_value r; napi_create_int32(env, -1, &r); return r; }
+	size_t argc = 3; napi_value a[3]; napi_get_cb_info(env, info, &argc, a, nullptr, nullptr);
+	int32_t kc, et; napi_get_value_int32(env, a[0], &kc); napi_get_value_int32(env, a[1], &et);
+	char kt[64] = {0}; size_t tl; napi_get_value_string_utf8(env, a[2], kt, sizeof(kt), &tl);
+	g_key_event_func(kc, et, kt); napi_value r; napi_create_int32(env, 0, &r); return r;
 }
 
 static napi_value NAPI_SendMouseEvent(napi_env env, napi_callback_info info) {
-	if (!g_mouse_event_func) {
-		napi_value r;
-		napi_create_int32(env, -1, &r);
-		return r;
-	}
-	
-	size_t argc = 6;
-	napi_value args[6];
-	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-
-	int32_t button = 0, action = 0;
-	double x = 0, y = 0, offsetX = 0, offsetY = 0;
-	napi_get_value_int32(env, args[0], &button);
-	napi_get_value_int32(env, args[1], &action);
-	napi_get_value_double(env, args[2], &x);
-	napi_get_value_double(env, args[3], &y);
-	napi_get_value_double(env, args[4], &offsetX);
-	napi_get_value_double(env, args[5], &offsetY);
-
-	g_mouse_event_func(button, action, x, y, offsetX, offsetY);
-	
-	napi_value result;
-	napi_create_int32(env, 0, &result);
-	return result;
+	if (!g_mouse_event_func) { napi_value r; napi_create_int32(env, -1, &r); return r; }
+	size_t argc = 6; napi_value a[6]; napi_get_cb_info(env, info, &argc, a, nullptr, nullptr);
+	int32_t b, act; double x, y, ox, oy;
+	napi_get_value_int32(env, a[0], &b); napi_get_value_int32(env, a[1], &act);
+	napi_get_value_double(env, a[2], &x); napi_get_value_double(env, a[3], &y);
+	napi_get_value_double(env, a[4], &ox); napi_get_value_double(env, a[5], &oy);
+	g_mouse_event_func(b, act, x, y, ox, oy); napi_value r; napi_create_int32(env, 0, &r); return r;
 }
 
 static napi_value NAPI_SendTouchEvent(napi_env env, napi_callback_info info) {
-	if (!g_touch_event_func) {
-		napi_value r;
-		napi_create_int32(env, -1, &r);
-		return r;
-	}
-
-	size_t argc = 4;
-	napi_value args[4];
-	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-
-	int32_t touchId = 0, action = 0;
-	double x = 0, y = 0;
-	napi_get_value_int32(env, args[0], &touchId);
-	napi_get_value_int32(env, args[1], &action);
-	napi_get_value_double(env, args[2], &x);
-	napi_get_value_double(env, args[3], &y);
-
-	g_touch_event_func(touchId, action, x, y);
-
-	napi_value result;
-	napi_create_int32(env, 0, &result);
-	return result;
+	if (!g_touch_event_func) { napi_value r; napi_create_int32(env, -1, &r); return r; }
+	size_t argc = 4; napi_value a[4]; napi_get_cb_info(env, info, &argc, a, nullptr, nullptr);
+	int32_t tid, act; double x, y;
+	napi_get_value_int32(env, a[0], &tid); napi_get_value_int32(env, a[1], &act);
+	napi_get_value_double(env, a[2], &x); napi_get_value_double(env, a[3], &y);
+	g_touch_event_func(tid, act, x, y); napi_value r; napi_create_int32(env, 0, &r); return r;
 }
 
 static napi_value NAPI_SendInputText(napi_env env, napi_callback_info info) {
-	if (!g_input_text_func) {
-		napi_value r;
-		napi_create_int32(env, -1, &r);
-		return r;
-	}
-
-	size_t argc = 1;
-	napi_value args[1];
-	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-
-	char text[256] = {0};
-	size_t len = 0;
-	napi_get_value_string_utf8(env, args[0], text, sizeof(text), &len);
-
-	g_input_text_func(text);
-
-	napi_value result;
-	napi_create_int32(env, 0, &result);
-	return result;
+	if (!g_input_text_func) { napi_value r; napi_create_int32(env, -1, &r); return r; }
+	size_t argc = 1; napi_value a[1]; napi_get_cb_info(env, info, &argc, a, nullptr, nullptr);
+	char t[256] = {0}; size_t l; napi_get_value_string_utf8(env, a[0], t, sizeof(t), &l);
+	g_input_text_func(t); napi_value r; napi_create_int32(env, 0, &r); return r;
 }
 
 static napi_value NAPI_OnPause(napi_env env, napi_callback_info info) {
-	OH_LOG_INFO(LOG_APP, "NAPI_OnPause");
-	if (g_on_pause_func) g_on_pause_func();
-	napi_value result;
-	napi_create_int32(env, 0, &result);
-	return result;
+	if (g_on_pause_func) g_on_pause_func(); napi_value r; napi_create_int32(env, 0, &r); return r;
 }
 
 static napi_value NAPI_OnResume(napi_env env, napi_callback_info info) {
-	OH_LOG_INFO(LOG_APP, "NAPI_OnResume");
-	if (g_on_resume_func) g_on_resume_func();
-	napi_value result;
-	napi_create_int32(env, 0, &result);
-	return result;
+	if (g_on_resume_func) g_on_resume_func(); napi_value r; napi_create_int32(env, 0, &r); return r;
 }
 
 static napi_value NAPI_OnBackPress(napi_env env, napi_callback_info info) {
-	OH_LOG_INFO(LOG_APP, "NAPI_OnBackPress");
-	if (g_on_back_press_func) g_on_back_press_func();
-	napi_value result;
-	napi_create_int32(env, 0, &result);
-	return result;
+	if (g_on_back_press_func) g_on_back_press_func(); napi_value r; napi_create_int32(env, 0, &r); return r;
 }
 
 static napi_value NAPI_RegisterTitleCallback(napi_env env, napi_callback_info info) {
-	size_t argc = 1;
-	napi_value args[1];
-	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-
-	napi_valuetype type;
-	napi_typeof(env, args[0], &type);
-	if (type != napi_function) {
-		OH_LOG_ERROR(LOG_APP, "NAPI_RegisterTitleCallback: expected a function");
-		napi_value result;
-		napi_create_int32(env, -1, &result);
-		return result;
-	}
-
-	// Release old ref if exists
-	if (g_title_callback_ref) {
-		napi_delete_reference(g_title_callback_env, g_title_callback_ref);
-	}
-
-	g_title_callback_env = env;
-	napi_create_reference(env, args[0], 1, &g_title_callback_ref);
-
-	OH_LOG_INFO(LOG_APP, "NAPI_RegisterTitleCallback: registered");
-	napi_value result;
-	napi_create_int32(env, 0, &result);
-	return result;
+	size_t argc = 1; napi_value a[1]; napi_get_cb_info(env, info, &argc, a, nullptr, nullptr);
+	napi_valuetype t; napi_typeof(env, a[0], &t);
+	if (t != napi_function) { napi_value r; napi_create_int32(env, -1, &r); return r; }
+	if (g_title_callback_ref) napi_delete_reference(g_title_callback_env, g_title_callback_ref);
+	g_title_callback_env = env; napi_create_reference(env, a[0], 1, &g_title_callback_ref);
+	napi_value r; napi_create_int32(env, 0, &r); return r;
 }
 
-// Called from C++ side (DisplayServer) to update the ArkTS window title
 extern "C" void harmonyos_notify_window_title(const char *title) {
-	if (!g_title_callback_ref || !g_title_callback_env || !title) {
-		return;
-	}
-
-	napi_value callback;
-	napi_get_reference_value(g_title_callback_env, g_title_callback_ref, &callback);
-
-	napi_value global;
-	napi_get_global(g_title_callback_env, &global);
-
-	napi_value arg;
-	napi_create_string_utf8(g_title_callback_env, title, NAPI_AUTO_LENGTH, &arg);
-
-	napi_call_function(g_title_callback_env, global, callback, 1, &arg, nullptr);
+	if (!g_title_callback_ref || !g_title_callback_env || !title) return;
+	napi_value cb; napi_get_reference_value(g_title_callback_env, g_title_callback_ref, &cb);
+	napi_value global; napi_get_global(g_title_callback_env, &global);
+	napi_value arg; napi_create_string_utf8(g_title_callback_env, title, NAPI_AUTO_LENGTH, &arg);
+	napi_call_function(g_title_callback_env, global, cb, 1, &arg, nullptr);
 }
 
-// Module registration
 EXTERN_C_START
 static napi_value GodotModuleInit(napi_env env, napi_value exports) {
-	// Wrap all NAPI functions inside a 'godot_napi' object.
-	// ArkTS imports this as: import { godot_napi } from 'libgodot_napi.so'
-	napi_value godot_napi_obj;
-	napi_create_object(env, &godot_napi_obj);
-
-	napi_property_descriptor desc[] = {
-		{"init",                  nullptr, NAPI_Init,                  nullptr, nullptr, nullptr, napi_default, nullptr},
-		{"cleanup",               nullptr, NAPI_Cleanup,               nullptr, nullptr, nullptr, napi_default, nullptr},
-		{"onSurfaceCreated",      nullptr, NAPI_OnSurfaceCreated,      nullptr, nullptr, nullptr, napi_default, nullptr},
-		{"onSurfaceDestroy",      nullptr, NAPI_OnSurfaceDestroy,      nullptr, nullptr, nullptr, napi_default, nullptr},
-		{"sendKeyEvent",          nullptr, NAPI_SendKeyEvent,          nullptr, nullptr, nullptr, napi_default, nullptr},
-		{"sendMouseEvent",        nullptr, NAPI_SendMouseEvent,        nullptr, nullptr, nullptr, napi_default, nullptr},
-		{"sendTouchEvent",        nullptr, NAPI_SendTouchEvent,        nullptr, nullptr, nullptr, napi_default, nullptr},
-		{"sendInputText",         nullptr, NAPI_SendInputText,         nullptr, nullptr, nullptr, napi_default, nullptr},
-		{"onPause",               nullptr, NAPI_OnPause,               nullptr, nullptr, nullptr, napi_default, nullptr},
-		{"onResume",              nullptr, NAPI_OnResume,              nullptr, nullptr, nullptr, napi_default, nullptr},
-		{"onBackPress",           nullptr, NAPI_OnBackPress,           nullptr, nullptr, nullptr, napi_default, nullptr},
+	napi_value o; napi_create_object(env, &o);
+	napi_property_descriptor d[] = {
+		{"loadLibrary", nullptr, NAPI_LoadLibrary, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"isLibraryLoaded", nullptr, NAPI_IsLibraryLoaded, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"startEngine", nullptr, NAPI_StartEngine, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"cleanup", nullptr, NAPI_Cleanup, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"onSurfaceCreated", nullptr, NAPI_OnSurfaceCreated, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"onSurfaceDestroy", nullptr, NAPI_OnSurfaceDestroy, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"sendKeyEvent", nullptr, NAPI_SendKeyEvent, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"sendMouseEvent", nullptr, NAPI_SendMouseEvent, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"sendTouchEvent", nullptr, NAPI_SendTouchEvent, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"sendInputText", nullptr, NAPI_SendInputText, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"onPause", nullptr, NAPI_OnPause, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"onResume", nullptr, NAPI_OnResume, nullptr, nullptr, nullptr, napi_default, nullptr},
+		{"onBackPress", nullptr, NAPI_OnBackPress, nullptr, nullptr, nullptr, napi_default, nullptr},
 		{"registerTitleCallback", nullptr, NAPI_RegisterTitleCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
 	};
-	napi_define_properties(env, godot_napi_obj, sizeof(desc) / sizeof(desc[0]), desc);
-
-	// Export wrapper object as named export 'godot_napi'
-	napi_set_named_property(env, exports, "godot_napi", godot_napi_obj);
+	napi_define_properties(env, o, sizeof(d)/sizeof(d[0]), d);
+	napi_set_named_property(env, exports, "godot_napi", o);
 	return exports;
 }
 EXTERN_C_END
 
 static napi_module godotModule = {
-	.nm_version = 1,
-	.nm_flags = 0,
-	.nm_filename = nullptr,
-	.nm_register_func = GodotModuleInit,
-	.nm_modname = "godot_napi",
-	.nm_priv = nullptr,
-	.reserved = {nullptr},
+	.nm_version = 1, .nm_flags = 0, .nm_filename = nullptr,
+	.nm_register_func = GodotModuleInit, .nm_modname = "godot_napi",
+	.nm_priv = nullptr, .reserved = {nullptr},
 };
 
 extern "C" __attribute__((constructor)) void RegisterGodotNAPI() {
 	napi_module_register(&godotModule);
-	OH_LOG_INFO(LOG_APP, "Godot NAPI module registered (dlopen bridge)");
 }
