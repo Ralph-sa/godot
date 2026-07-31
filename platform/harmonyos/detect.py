@@ -55,7 +55,7 @@ def get_flags():
 
 def configure(env: "SConsEnvironment"):
     # Validate arch
-    supported_arches = ["arm64"]
+    supported_arches = ["arm64", "x86_64"]
     validate_arch(env["arch"], get_name(), supported_arches)
 
     # ---- Editor build configuration ----
@@ -83,10 +83,16 @@ def configure(env: "SConsEnvironment"):
                      "Please ensure OHOS_SDK_HOME is correct and the native toolchain is installed.")
         sys.exit(255)
 
-    # Architecture: only arm64 (Kirin X90)
+    # Architecture: arm64 or x86_64
     # Note: wrapper scripts use aarch64-unknown-linux-ohos but sysroot uses aarch64-linux-ohos.
     # Using aarch64-linux-ohos for sysroot compatibility.
-    target_triple = "aarch64-linux-ohos"
+    if env["arch"] == "x86_64":
+        target_triple = "x86_64-linux-ohos"
+        env.Append(CCFLAGS=["-march=core2", "-msse4.2"])
+    else:
+        target_triple = "aarch64-linux-ohos"
+        env.Append(CCFLAGS=["-march=armv8-a"])
+        env.Append(CPPDEFINES=["__ARM_ARCH_8A__"])
     target_option = ["--target=" + target_triple]
     env.Append(ASFLAGS=target_option)
     env.Append(CCFLAGS=target_option)
@@ -121,6 +127,11 @@ def configure(env: "SConsEnvironment"):
     env["RANLIB"] = (os.path.join(compiler_path, "llvm-ranlib.exe")).replace("\\", "/")
     env["AS"] = clang_exe
 
+    # Assembly file (.S) compilation — use clang with -c -x assembler-with-cpp
+    # SCons on Windows host doesn't auto-detect .S files; we explicitly add the builder.
+    if env["PLATFORM"] == "win32":
+        env["ASCOM"] = "$AS $ASFLAGS -c -x assembler-with-cpp $_CCCOMCOM -o $TARGET $SOURCE"
+
     # Sysroot (normalize to forward slashes)
     sysroot = os.path.join(ohos_sdk, "native", "sysroot").replace("\\", "/")
     env.Append(CCFLAGS=[f"--sysroot={sysroot}"])
@@ -132,9 +143,7 @@ def configure(env: "SConsEnvironment"):
                   "-fstack-protector-strong", "-fvisibility=hidden"])
     )
 
-    # ARM64 specific
-    env.Append(CCFLAGS=["-march=armv8-a"])
-    env.Append(CPPDEFINES=["__ARM_ARCH_8A__"])
+    # Architecture-specific settings applied above
     env.Append(CPPDEFINES=[("_FILE_OFFSET_BITS", 64)])
 
     env.Append(CCFLAGS=["-ffp-contract=off"])

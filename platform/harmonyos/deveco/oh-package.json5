@@ -4,7 +4,5 @@
   "dependencies": {
   },
   "devDependencies": {
-    "@ohos/hvigor-ohos-plugin": "file:.hvigor_tools/hvigor-ohos-plugin",
-    "@ohos/hvigor": "file:.hvigor_tools/hvigor"
   }
 }
