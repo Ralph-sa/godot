@@ -12,6 +12,9 @@ namespace HarmonyOSInput {
 // Translate OHOS key code to Godot Key enum.
 ::Key ohos_key_to_godot(int ohos_keycode);
 
+// Side of the keyboard a modifier key sits on; UNSPECIFIED for all other keys.
+::KeyLocation ohos_key_location(int ohos_keycode);
+
 // Process keyboard event.
 void process_key_event(int key_code, int event_type, const char *key_text);
 
@@ -20,6 +23,10 @@ void process_key_event(int key_code, int event_type, const char *key_text);
 // action: 0=press, 1=release, 2=move
 void process_mouse_event(int button, int action, double x, double y,
                          double offset_x, double offset_y);
+
+// Process mouse wheel event. Offsets are in wheel notches; positive
+// offset_y scrolls up, positive offset_x scrolls right.
+void process_mouse_scroll_event(double x, double y, double offset_x, double offset_y);
 
 // Process touch event.
 // action: 0=down, 1=up, 2=move

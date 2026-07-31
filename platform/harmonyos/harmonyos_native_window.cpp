@@ -4,6 +4,7 @@
 
 #include "harmonyos_native_window.h"
 #include "display_server_harmonyos.h"
+#include "harmonyos_input.h"
 
 #ifdef HARMONYOS_ENABLED
 
@@ -26,8 +27,44 @@ bool HarmonyOSNativeWindow::initialize_with_xcomponent(OH_NativeXComponent *p_xc
 
 	OH_NativeXComponent_RegisterCallback(native_xcomponent_, &callback);
 
+	// The mouse wheel does not surface through ArkTS onMouse, and ArkTS
+	// AxisEvent only exposes the step configuration rather than the actual
+	// scroll delta. The native axis callback is the only path that carries
+	// both direction and magnitude.
+	int32_t axis_ret = OH_NativeXComponent_RegisterUIInputEventCallback(
+			native_xcomponent_, DispatchAxisEvent_CB, ARKUI_UIINPUTEVENT_TYPE_AXIS);
+	if (axis_ret != 0) {
+		OH_LOG_WARN(LOG_APP, "Axis event callback registration failed (ret=%{public}d), mouse wheel will not work",
+				axis_ret);
+	}
+
 	OH_LOG_INFO(LOG_APP, "XComponent initialized with native handle");
 	return true;
+}
+
+void HarmonyOSNativeWindow::DispatchAxisEvent_CB(OH_NativeXComponent *component,
+		ArkUI_UIInputEvent *event, ArkUI_UIInputEvent_Type type) {
+	if (!event || type != ARKUI_UIINPUTEVENT_TYPE_AXIS) {
+		return;
+	}
+
+	// BEGIN/UPDATE carry scroll deltas; END/CANCEL only close the gesture and
+	// would otherwise emit a spurious zero-delta wheel click.
+	int32_t action = OH_ArkUI_UIInputEvent_GetAction(event);
+	if (action != UI_AXIS_EVENT_ACTION_BEGIN && action != UI_AXIS_EVENT_ACTION_UPDATE) {
+		return;
+	}
+
+	double vertical = OH_ArkUI_AxisEvent_GetVerticalAxisValue(event);
+	double horizontal = OH_ArkUI_AxisEvent_GetHorizontalAxisValue(event);
+	if (vertical == 0.0 && horizontal == 0.0) {
+		return;
+	}
+
+	float x = OH_ArkUI_PointerEvent_GetX(event);
+	float y = OH_ArkUI_PointerEvent_GetY(event);
+
+	HarmonyOSInput::process_mouse_scroll_event(x, y, horizontal, vertical);
 }
 
 bool HarmonyOSNativeWindow::initialize_with_surface_id(uint64_t p_surface_id) {

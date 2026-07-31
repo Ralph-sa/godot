@@ -259,6 +259,14 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_start() {
 					(unsigned long long)Engine::get_singleton()->get_frames_drawn());
 		}
 
+		// The editor enables low-processor mode (OS::set_low_processor_usage_mode(true))
+		// so RenderingServer::draw() only runs when the scene reports changes. On a
+		// headless-style startup with an empty project there is no animation or input,
+		// has_changed() stays false after the first frame, and the UI is never drawn
+		// again — leaving the swap chain contents black forever. Force a redraw every
+		// frame on the engine thread so the editor UI becomes visible.
+		OS::get_singleton()->set_low_processor_usage_mode(false);
+
 		if (Main::iteration()) {
 			OH_LOG_INFO(LOG_APP, "[frame] Main::iteration requested exit at frame=%{public}d", frame_count);
 			break; // Engine requested exit.

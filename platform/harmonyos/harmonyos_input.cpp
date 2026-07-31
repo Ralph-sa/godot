@@ -38,7 +38,10 @@ static const int OHOS_KEY_UP = 2012;  // DPAD_UP
 static const int OHOS_KEY_DOWN = 2013; // DPAD_DOWN
 static const int OHOS_KEY_LEFT = 2014; // DPAD_LEFT
 static const int OHOS_KEY_RIGHT = 2015; // DPAD_RIGHT
-static const int OHOS_KEY_HOME = 1;
+// MOVE_HOME (2081), not KEYCODE_HOME (1). The latter is the system home button
+// that returns to the launcher — mapping it to Key::HOME made a hardware button
+// act like "go to start of line". MOVE_END (2082) is its correct counterpart.
+static const int OHOS_KEY_HOME = 2081; // MOVE_HOME
 static const int OHOS_KEY_END = 2082; // MOVE_END
 static const int OHOS_KEY_PAGE_UP = 2068;
 static const int OHOS_KEY_PAGE_DOWN = 2069;
@@ -66,6 +69,11 @@ static const int OHOS_KEY_BACKSLASH = 2061;
 static const int OHOS_KEY_SEMICOLON = 2062;
 static const int OHOS_KEY_APOSTROPHE = 2063;
 static const int OHOS_KEY_GRAVE = 2056;
+static const int OHOS_KEY_COMMA = 2043;
+static const int OHOS_KEY_PERIOD = 2044;
+static const int OHOS_KEY_SLASH = 2064;
+static const int OHOS_KEY_AT = 2065;
+static const int OHOS_KEY_PLUS = 2066;
 
 // Special
 static const int OHOS_KEY_DELETE = 2071; // FORWARD_DEL
@@ -101,10 +109,11 @@ static const int OHOS_KEY_NUMPAD_DOT = 2117;
 static const int OHOS_KEY_NUMPAD_ENTER = 2119;
 
 // Media keys
-static const int OHOS_KEY_MEDIA_PLAY_PAUSE = 10;
-static const int OHOS_KEY_MEDIA_STOP = 11;
-static const int OHOS_KEY_MEDIA_NEXT = 12;
-static const int OHOS_KEY_MEDIA_PREV = 13;
+// OHOS has no PLAY_PAUSE/STOP/NEXT/PREVIOUS keycodes; 10-13 were Android values
+// that collide with unrelated OHOS system keys. Only the codes below exist.
+static const int OHOS_KEY_MEDIA_PLAY = 2085;
+static const int OHOS_KEY_MEDIA_PAUSE = 2086;
+static const int OHOS_KEY_MEDIA_RECORD = 2089;
 static const int OHOS_KEY_MEDIA_VOLUME_UP = 16;
 static const int OHOS_KEY_MEDIA_VOLUME_DOWN = 17;
 static const int OHOS_KEY_MEDIA_VOLUME_MUTE = 22;
@@ -190,6 +199,11 @@ Key ohos_key_to_godot(int keycode) {
 		case OHOS_KEY_SEMICOLON:     return Key::SEMICOLON;
 		case OHOS_KEY_APOSTROPHE:    return Key::APOSTROPHE;
 		case OHOS_KEY_GRAVE:         return Key::QUOTELEFT;
+		case OHOS_KEY_COMMA:         return Key::COMMA;
+		case OHOS_KEY_PERIOD:        return Key::PERIOD;
+		case OHOS_KEY_SLASH:         return Key::SLASH;
+		case OHOS_KEY_AT:            return Key::AT;
+		case OHOS_KEY_PLUS:          return Key::PLUS;
 	}
 
 	// ── Special ──
@@ -230,16 +244,34 @@ Key ohos_key_to_godot(int keycode) {
 
 	// ── Media ──
 	switch (keycode) {
-		case OHOS_KEY_MEDIA_PLAY_PAUSE:  return Key::MEDIAPLAY;
-		case OHOS_KEY_MEDIA_STOP:        return Key::MEDIASTOP;
-		case OHOS_KEY_MEDIA_NEXT:        return Key::MEDIANEXT;
-		case OHOS_KEY_MEDIA_PREV:        return Key::MEDIAPREVIOUS;
+		case OHOS_KEY_MEDIA_PLAY:        return Key::MEDIAPLAY;
+		case OHOS_KEY_MEDIA_PAUSE:       return Key::MEDIASTOP;
+		case OHOS_KEY_MEDIA_RECORD:      return Key::MEDIARECORD;
 		case OHOS_KEY_MEDIA_VOLUME_UP:   return Key::VOLUMEUP;
 		case OHOS_KEY_MEDIA_VOLUME_DOWN: return Key::VOLUMEDOWN;
 		case OHOS_KEY_MEDIA_VOLUME_MUTE: return Key::VOLUMEMUTE;
 	}
 
 	return Key::NONE;
+}
+
+// Godot maps both physical shift keys onto a single Key::SHIFT, so the side has
+// to travel separately for shortcuts that distinguish left from right.
+KeyLocation ohos_key_location(int keycode) {
+	switch (keycode) {
+		case OHOS_KEY_SHIFT_LEFT:
+		case OHOS_KEY_CTRL_LEFT:
+		case OHOS_KEY_ALT_LEFT:
+		case OHOS_KEY_META_LEFT:
+			return KeyLocation::LEFT;
+		case OHOS_KEY_SHIFT_RIGHT:
+		case OHOS_KEY_CTRL_RIGHT:
+		case OHOS_KEY_ALT_RIGHT:
+		case OHOS_KEY_META_RIGHT:
+			return KeyLocation::RIGHT;
+		default:
+			return KeyLocation::UNSPECIFIED;
+	}
 }
 
 // ==== Event Processing ====
@@ -292,6 +324,7 @@ void process_key_event(int key_code, int event_type, const char *key_text) {
 	key_event->set_physical_keycode(godot_key);
 	key_event->set_key_label(Key::NONE);
 	key_event->set_unicode(0);
+	key_event->set_location(ohos_key_location(key_code));
 
 	if (key_text && std::strlen(key_text) > 0) {
 		// key_text is UTF-8 encoded; decode with Godot's String so multi-byte
@@ -361,6 +394,46 @@ void process_mouse_event(int button, int action, double x, double y,
 	mouse_event->set_button_mask(get_mouse_button_mask());
 
 	Input::get_singleton()->parse_input_event(mouse_event);
+}
+
+// Godot models the wheel as buttons rather than an axis, and expects a matching
+// release right after each press — without it the editor treats the wheel as
+// stuck down and scrolling never stops.
+static void send_wheel_click(MouseButton p_button, double p_factor, const Vector2 &p_pos) {
+	Ref<InputEventMouseButton> ev;
+	ev.instantiate();
+	ev->set_position(p_pos);
+	ev->set_global_position(p_pos);
+	ev->set_button_index(p_button);
+	ev->set_factor(p_factor);
+	ev->set_button_mask(get_mouse_button_mask());
+	ev->set_shift_pressed(shift_pressed.load(std::memory_order_acquire));
+	ev->set_ctrl_pressed(ctrl_pressed.load(std::memory_order_acquire));
+	ev->set_alt_pressed(alt_pressed.load(std::memory_order_acquire));
+	ev->set_meta_pressed(meta_pressed.load(std::memory_order_acquire));
+
+	ev->set_pressed(true);
+	Input::get_singleton()->parse_input_event(ev);
+
+	Ref<InputEventMouseButton> release = ev->duplicate();
+	release->set_pressed(false);
+	Input::get_singleton()->parse_input_event(release);
+}
+
+void process_mouse_scroll_event(double x, double y, double offset_x, double offset_y) {
+	g_mouse_pos_x.store((int32_t)x, std::memory_order_release);
+	g_mouse_pos_y.store((int32_t)y, std::memory_order_release);
+
+	const Vector2 pos(x, y);
+
+	if (offset_y != 0.0) {
+		MouseButton button = offset_y > 0.0 ? MouseButton::WHEEL_UP : MouseButton::WHEEL_DOWN;
+		send_wheel_click(button, Math::abs(offset_y), pos);
+	}
+	if (offset_x != 0.0) {
+		MouseButton button = offset_x > 0.0 ? MouseButton::WHEEL_RIGHT : MouseButton::WHEEL_LEFT;
+		send_wheel_click(button, Math::abs(offset_x), pos);
+	}
 }
 
 void process_touch_event(int touch_id, int action, double x, double y) {

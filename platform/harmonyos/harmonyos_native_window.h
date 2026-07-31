@@ -7,6 +7,7 @@
 #ifdef HARMONYOS_ENABLED
 
 #include <ace/xcomponent/native_interface_xcomponent.h>
+#include <arkui/ui_input_event.h>
 #include <native_window/external_window.h>
 #include "harmonyos_log.h"
 
@@ -38,6 +39,10 @@ public:
 	static void OnSurfaceChanged_CB(OH_NativeXComponent *component, void *window);
 	static void OnSurfaceDestroyed_CB(OH_NativeXComponent *component, void *window);
 	static void DispatchTouchEvent_CB(OH_NativeXComponent *component, void *window);
+
+	// Mouse wheel / axis input, registered via RegisterUIInputEventCallback.
+	static void DispatchAxisEvent_CB(OH_NativeXComponent *component,
+			ArkUI_UIInputEvent *event, ArkUI_UIInputEvent_Type type);
 
 private:
 	OH_NativeXComponent *native_xcomponent_ = nullptr;

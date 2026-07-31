@@ -36,7 +36,7 @@ export struct GodotSurface {
   //
   // OHOS key events arrive as onKeyEvent on the XComponent.
   // type: KeyType.Down=0, KeyType.Up=1
-  // keyCode: OHOS key code (e.g. 2014=Escape, 2017=Up)
+  // keyCode: OHOS key code (e.g. 2070=Escape, 2012=DpadUp)
   // keyText: text representation
   handleKeyEvent(event: KeyEvent): void {
     try {
@@ -139,7 +139,7 @@ export struct GodotSurface {
   }
 
   build() {
-    Column() {
+    Stack({ alignContent: Alignment.TopStart }) {
       XComponent({
         id: this.surfaceId,
         type: XComponentType.SURFACE,
@@ -147,7 +147,7 @@ export struct GodotSurface {
       })
         .width('100%')
         .height('100%')
-        .backgroundColor(Color.Black)
+        .backgroundColor(Color.Red)
         .focusable(true)
         .focusOnTouch(true)
         .onLoad(() => {
@@ -190,6 +190,12 @@ export struct GodotSurface {
         .onTouch((event: TouchEvent) => {
           this.handleTouchEvent(event);
         })
+      Text('GODOT-VK-ACTIVE')
+        .fontSize(48)
+        .fontColor(Color.White)
+        .backgroundColor('#FF000088')
+        .padding(16)
+        .margin({ left: 40, top: 40 })
     }
     .width('100%')
     .height('100%')
