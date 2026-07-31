@@ -6,9 +6,6 @@ import { GodotEditorVM } from '../viewmodel/GodotEditorVM';
 const TAG = 'GodotEditorPage';
 const DOMAIN = 0x0000;
 
-/** 设为 true 则自动进入测试模式（跳过 ProjectSelector）。Debug 构建需要时启用。 */
-const AUTO_TEST_MODE: boolean = false;
-
 /**
  * Main Godot Editor page.
  *
@@ -16,8 +13,6 @@ const AUTO_TEST_MODE: boolean = false;
  * 1. Show ProjectSelector - user selects or creates a project.
  * 2. Initialize Godot engine with the selected project path.
  * 3. Display GodotSurface (Vulkan rendering surface).
- *
- * AUTO_TEST_MODE=true → 跳过 UI，直接初始化引擎用沙箱自动测试项目。
  */
 @Entry
 @ComponentV2
@@ -28,15 +23,6 @@ struct GodotEditorPage {
 
   aboutToAppear(): void {
     hilog.info(DOMAIN, TAG, 'GodotEditorPage aboutToAppear');
-
-    if (AUTO_TEST_MODE) {
-      const testProject: string = 'auto_test_project';
-      hilog.info(DOMAIN, TAG, `Auto-test mode: using project "${testProject}"`);
-      // 延迟一帧以等待 UI 就绪
-      setTimeout(() => {
-        this.onProjectSelected(testProject);
-      }, 200);
-    }
   }
 
   aboutToDisappear(): void {

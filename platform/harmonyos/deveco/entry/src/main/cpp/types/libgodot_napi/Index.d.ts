@@ -2,13 +2,8 @@
  * NAPI TypeScript declarations for Godot Engine bridge
  */
 export const godot_napi: {
-  /**
-   * Initialize the Godot engine asynchronously.
-   * dlopen of libgodot.so (151MB) runs on a worker thread to prevent ANR.
-   * The callback is fired on the main thread once loading is complete.
-   * @param callback (result: number) => void — 0 = success, negative = error
-   */
-  init: (callback: (result: number) => void) => void;
+  /** Initialize the Godot engine. Returns 0 on success. */
+  init: () => number;
 
   /** Cleanup the Godot engine. Returns 0 on success. */
   cleanup: () => number;
