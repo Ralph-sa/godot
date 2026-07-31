@@ -31,4 +31,7 @@ void process_input_text(const char *text);
 // Current held mouse button bitmask (MouseButtonMask).
 MouseButtonMask get_mouse_button_mask();
 
+// Last known pointer position, updated by process_mouse_event().
+Point2i get_mouse_position();
+
 } // namespace HarmonyOSInput

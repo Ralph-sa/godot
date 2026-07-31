@@ -14,7 +14,7 @@ void harmonyos_godot_start();
 void harmonyos_godot_cleanup();
 
 // Surface lifecycle (called from NAPI bridge)
-int harmonyos_godot_surface_created(const char *surface_id);
+int harmonyos_godot_surface_created(const char *surface_id, int surface_width, int surface_height);
 int harmonyos_godot_surface_destroy();
 
 // Input events (forwarded from ArkTS)

@@ -159,11 +159,19 @@ export struct GodotSurface {
             // the libraryname injection (the module was already loaded by the
             // ArkTS import, so OH_NATIVE_XCOMPONENT_OBJ is never injected).
             const sid: string = this.xcController.getXComponentSurfaceId();
-            hilog.info(DOMAIN, TAG, '[INIT STEP 16/16] surfaceId=' + sid);
-            godot_napi.onSurfaceCreated(sid);
+            // getXComponentSurfaceRect() 的返回类型未从任何 kit 导出，而 ArkTS
+            // 要求局部变量的类型可解析，所以不能声明中间变量接它，只能直接取字段。
+            const surfW: number = Math.round(this.xcController.getXComponentSurfaceRect().surfaceWidth);
+            const surfH: number = Math.round(this.xcController.getXComponentSurfaceRect().surfaceHeight);
+            hilog.info(DOMAIN, TAG, '[INIT STEP 16/16] surfaceId=' + sid +
+              ' rect=' + surfW + 'x' + surfH);
+            godot_napi.onSurfaceCreated(sid, surfW, surfH);
           } catch (e) {
             hilog.error(DOMAIN, TAG, 'NAPI surface created error: ' + e);
           }
+        })
+        .onAreaChange((_oldValue: Area, newValue: Area) => {
+          hilog.info(DOMAIN, TAG, 'XComponent area: w=' + newValue.width + ' h=' + newValue.height);
         })
         .onDestroy(() => {
           hilog.info(DOMAIN, TAG, 'XComponent onDestroy: ' + this.surfaceId);

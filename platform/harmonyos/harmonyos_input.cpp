@@ -124,6 +124,19 @@ MouseButtonMask get_mouse_button_mask() {
 	return MouseButtonMask(g_mouse_button_mask.load(std::memory_order_acquire));
 }
 
+// Current pointer position, updated on every mouse event and read by
+// DisplayServer::mouse_get_position(). Kept here rather than as DisplayServer
+// state because this is the only place that learns of pointer movement.
+// Stored as two atomics: Vector2i is not trivially copyable, so it cannot be
+// held in a single lock-free std::atomic.
+static std::atomic<int32_t> g_mouse_pos_x(0);
+static std::atomic<int32_t> g_mouse_pos_y(0);
+
+Point2i get_mouse_position() {
+	return Point2i(g_mouse_pos_x.load(std::memory_order_acquire),
+			g_mouse_pos_y.load(std::memory_order_acquire));
+}
+
 // ==== Key Mapping Function ====
 
 Key ohos_key_to_godot(int keycode) {
@@ -302,6 +315,11 @@ void process_key_event(int key_code, int event_type, const char *key_text) {
 
 void process_mouse_event(int button, int action, double x, double y,
                           double offset_x, double offset_y) {
+	// Every mouse event carries a position; record it so that
+	// DisplayServer::mouse_get_position() reflects reality instead of (0,0).
+	g_mouse_pos_x.store((int32_t)x, std::memory_order_release);
+	g_mouse_pos_y.store((int32_t)y, std::memory_order_release);
+
 	if (action == 2) {
 		// Motion event
 		Ref<InputEventMouseMotion> motion_event;

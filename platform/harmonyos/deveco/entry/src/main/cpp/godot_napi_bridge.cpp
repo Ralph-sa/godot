@@ -24,7 +24,7 @@
 typedef int (*godot_init_t)();
 typedef void (*godot_start_t)();
 typedef void (*godot_cleanup_t)();
-typedef int (*godot_surface_created_t)(const char *);
+typedef int (*godot_surface_created_t)(const char *, int, int);
 typedef int (*godot_surface_destroy_t)();
 typedef void (*godot_key_event_t)(int, int, const char *);
 typedef void (*godot_mouse_event_t)(int, int, double, double, double, double);
@@ -139,11 +139,18 @@ static napi_value NAPI_Cleanup(napi_env env, napi_callback_info info) {
 }
 
 static napi_value NAPI_OnSurfaceCreated(napi_env env, napi_callback_info info) {
-	size_t argc = 1; napi_value args[1];
+	size_t argc = 3; napi_value args[3];
 	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 	char id[256] = {0}; size_t len;
-	napi_get_value_string_utf8(env, args[0], id, sizeof(id), &len);
-	int s = g_surface_created_func ? g_surface_created_func(id) : -1;
+	int32_t w = 0, h = 0;
+	if (argc >= 1 && args[0]) {
+		napi_get_value_string_utf8(env, args[0], id, sizeof(id), &len);
+	}
+	if (argc >= 3 && args[1] && args[2]) {
+		napi_get_value_int32(env, args[1], &w);
+		napi_get_value_int32(env, args[2], &h);
+	}
+	int s = g_surface_created_func ? g_surface_created_func(id, (int)w, (int)h) : -1;
 	napi_value r; napi_create_int32(env, s, &r); return r;
 }
 

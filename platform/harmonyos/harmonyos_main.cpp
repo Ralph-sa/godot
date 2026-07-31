@@ -273,8 +273,9 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_start() {
 	OH_LOG_INFO(LOG_APP, "Engine cleanup done");
 }
 
-HARMONYOS_EXPORT_FN int harmonyos_godot_surface_created(const char *surface_id) {
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] Surface created: %{public}s", surface_id);
+HARMONYOS_EXPORT_FN int harmonyos_godot_surface_created(const char *surface_id, int surface_width, int surface_height) {
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] Surface created: %{public}s size=%{public}dx%{public}d",
+			surface_id, surface_width, surface_height);
 
 	if (!g_native_window) {
 		OH_LOG_ERROR(LOG_APP, "Native window not initialized");
@@ -286,6 +287,18 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_surface_created(const char *surface_id) 
 	if (!g_surface_created.compare_exchange_strong(expected, true)) {
 		OH_LOG_WARN(LOG_APP, "Surface already created, skipping duplicate callback");
 		return 0;
+	}
+
+	// Report the actual XComponent surface size (pixels) to the DisplayServer
+	// BEFORE the engine thread creates the Vulkan swap chain in
+	// reset_window(). The swap chain extent is derived from this size when the
+	// surface capabilities report an undefined current extent (0xFFFFFFFF),
+	// which is the case on the OHOS Vulkan implementation.
+	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
+	if (ds && surface_width > 0 && surface_height > 0) {
+		ds->notify_surface_changed(surface_width, surface_height);
+		OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] window size updated to %{public}dx%{public}d",
+				surface_width, surface_height);
 	}
 
 	// Preferred path (ArkTS XComponent scenario): create the OHNativeWindow
@@ -326,9 +339,9 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_surface_created(const char *surface_id) 
 				(void *)xcomponent, (int)g_native_window->is_surface_ready());
 	}
 
-	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
-	if (ds) {
-		ds->notify_surface_created();
+	DisplayServerHarmonyOS *ds2 = DisplayServerHarmonyOS::get_singleton();
+	if (ds2) {
+		ds2->notify_surface_created();
 
 		// NOTE: Vulkan window surface / swapchain creation is deferred to
 		// harmonyos_godot_start() on the engine thread, which waits for the
@@ -390,11 +403,21 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_on_pause() {
 	// For a desktop-style editor process, pause is transient; destroying and
 	// recreating the rendering context on resume risks crashes and state loss.
 	g_paused.store(true, std::memory_order_release);
+
+	// Foreground/background transitions are the only focus signal HarmonyOS
+	// gives us, so this is where the engine learns the window lost focus.
+	if (DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton()) {
+		ds->notify_window_focus(false);
+	}
 }
 
 HARMONYOS_EXPORT_FN void harmonyos_godot_on_resume() {
 	OH_LOG_INFO(LOG_APP, "Application resumed");
 	g_paused.store(false, std::memory_order_release);
+
+	if (DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton()) {
+		ds->notify_window_focus(true);
+	}
 }
 
 HARMONYOS_EXPORT_FN void harmonyos_godot_on_back_press() {

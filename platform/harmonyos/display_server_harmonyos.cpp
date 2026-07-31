@@ -34,15 +34,31 @@ DisplayServerHarmonyOS *DisplayServerHarmonyOS::get_singleton() {
 
 bool DisplayServerHarmonyOS::has_feature(DisplayServerEnums::Feature p_feature) const {
 	switch (p_feature) {
-		case DisplayServerEnums::FEATURE_HIDPI:
 		case DisplayServerEnums::FEATURE_SWAP_BUFFERS:
-		case DisplayServerEnums::FEATURE_KEEP_SCREEN_ON:
 		case DisplayServerEnums::FEATURE_CLIPBOARD:
-		case DisplayServerEnums::FEATURE_CURSOR_SHAPE:
-		case DisplayServerEnums::FEATURE_IME:
 		case DisplayServerEnums::FEATURE_MOUSE:
 		case DisplayServerEnums::FEATURE_TOUCHSCREEN:
 			return true;
+
+		// 以下能力目前只有空壳实现。声明 false 让引擎走它自己设计好的降级路径
+		// 是安全的；声明 true 却没有实现，引擎会信以为真地走进空路径，表现为
+		// 一批无法归因的怪异行为。每项的复位条件见注释。
+		case DisplayServerEnums::FEATURE_HIDPI:
+			// screen_get_dpi / screen_get_scale 返回的成员从无写入点，
+			// 恒为 160 与 1.0。接入 @ohos.display 真实数据后可改回 true。
+			return false;
+		case DisplayServerEnums::FEATURE_KEEP_SCREEN_ON:
+			// screen_set_keep_on 只写内存标志，未调用任何 OHOS 电源管理接口。
+			return false;
+		case DisplayServerEnums::FEATURE_CURSOR_SHAPE:
+			// cursor_set_shape 只存枚举值。OHOS NDK 无原生光标形状接口，
+			// 对应能力在 ArkTS 侧的 @ohos.multimodalInput.pointer。
+			return false;
+		case DisplayServerEnums::FEATURE_IME:
+			// window_set_ime_* 只写内存，且 ime_get_text / ime_get_selection
+			// 未 override —— 引擎一旦当真调用会落到基类的报错分支。
+			return false;
+
 		case DisplayServerEnums::FEATURE_GLOBAL_MENU:
 			// OHOS 无系统全局菜单，NativeMenu 为基础实现（不支持 GLOBAL_MENU）。
 			return native_menu && native_menu->has_feature(NativeMenu::FEATURE_GLOBAL_MENU);
@@ -149,12 +165,23 @@ Point2i DisplayServerHarmonyOS::screen_get_position(int p_screen) const {
 	return Point2i();
 }
 
+void DisplayServerHarmonyOS::set_window_size(const Size2i &p_size) {
+	window_size_x.store(p_size.width, std::memory_order_release);
+	window_size_y.store(p_size.height, std::memory_order_release);
+}
+
+Size2i DisplayServerHarmonyOS::get_window_size() const {
+	return Size2i(window_size_x.load(std::memory_order_acquire),
+			window_size_y.load(std::memory_order_acquire));
+}
+
 Size2i DisplayServerHarmonyOS::screen_get_size(int p_screen) const {
-	return window_size;
+	return get_window_size();
 }
 
 Rect2i DisplayServerHarmonyOS::screen_get_usable_rect(int p_screen) const {
-	return Rect2i(0, 0, window_size.width, window_size.height);
+	Size2i size = get_window_size();
+	return Rect2i(0, 0, size.width, size.height);
 }
 
 int DisplayServerHarmonyOS::screen_get_dpi(int p_screen) const {
@@ -169,6 +196,9 @@ float DisplayServerHarmonyOS::screen_get_refresh_rate(int p_screen) const {
 	return screen_refresh_rate_val;
 }
 
+// 只记录状态：OHOS NDK 无电源管理接口，屏幕常亮需要 ArkTS 侧调用
+// window.setWindowKeepScreenOn 并经 NAPI 转发。在那之前 FEATURE_KEEP_SCREEN_ON
+// 保持 false，引擎不会依赖此状态。
 void DisplayServerHarmonyOS::screen_set_keep_on(bool p_enable) {
 	keep_screen_on = p_enable;
 }
@@ -297,28 +327,29 @@ Size2i DisplayServerHarmonyOS::window_get_min_size(DisplayServerEnums::WindowID 
 }
 
 void DisplayServerHarmonyOS::window_set_size(const Size2i p_size, DisplayServerEnums::WindowID p_window) {
-	window_size = p_size;
+	set_window_size(p_size);
 }
 
 Size2i DisplayServerHarmonyOS::window_get_size(DisplayServerEnums::WindowID p_window) const {
-	return window_size;
+	return get_window_size();
 }
 
 Size2i DisplayServerHarmonyOS::window_get_size_with_decorations(DisplayServerEnums::WindowID p_window) const {
-	return window_size;
+	return get_window_size();
 }
 
 void DisplayServerHarmonyOS::window_set_mode(DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::WindowID p_window) {
+	// Only the requested mode is recorded. An actual fullscreen/windowed
+	// transition is a system-level operation that has to go through ArkTS
+	// (window.setWindowLayoutFullScreen) and be forwarded over NAPI, and the
+	// bridge does not expose that entry point yet.
+	//
+	// This used to forward through a weak-declared harmonyos_notify_window_mode,
+	// but that symbol has no definition anywhere in the repository, so the null
+	// check was always false and the branch never ran. Keeping it only made the
+	// path look wired up. Contrast harmonyos_notify_window_title, which is
+	// genuinely defined in the NAPI bridge and does work.
 	_window_mode = p_mode;
-
-	// Notify ArkTS layer of window mode change.
-	// Fullscreen/windowed transitions in HarmonyOS are system-level
-	// operations handled through ArkTS Window API (setWindowSystemBarProperties, etc.).
-	// We use a weak symbol so linking succeeds without the NAPI bridge.
-	extern void harmonyos_notify_window_mode(int mode) __attribute__((weak));
-	if (harmonyos_notify_window_mode) {
-		harmonyos_notify_window_mode((int)p_mode);
-	}
 }
 
 DisplayServerEnums::WindowMode DisplayServerHarmonyOS::window_get_mode(DisplayServerEnums::WindowID p_window) const {
@@ -343,15 +374,30 @@ void DisplayServerHarmonyOS::window_move_to_foreground(DisplayServerEnums::Windo
 }
 
 bool DisplayServerHarmonyOS::window_is_focused(DisplayServerEnums::WindowID p_window) const {
-	return window_focused;
+	return window_focused.load(std::memory_order_acquire);
+}
+
+void DisplayServerHarmonyOS::notify_window_focus(bool p_focused) {
+	if (window_focused.load(std::memory_order_acquire) == p_focused) {
+		return;
+	}
+	window_focused.store(p_focused, std::memory_order_release);
+
+	// Deliver the transition to the engine. Without this the editor never
+	// learns it lost focus and keeps treating itself as active — it would go
+	// on auto-saving, animating and grabbing input while in the background.
+	send_window_event(p_focused ? DisplayServerEnums::WINDOW_EVENT_FOCUS_IN
+								: DisplayServerEnums::WINDOW_EVENT_FOCUS_OUT);
+
+	OH_LOG_INFO(LOG_APP, "[DS] window focus -> %{public}s", p_focused ? "IN" : "OUT");
 }
 
 bool DisplayServerHarmonyOS::window_can_draw(DisplayServerEnums::WindowID p_window) const {
-	return window_can_draw_val;
+	return window_can_draw_val.load(std::memory_order_acquire);
 }
 
 bool DisplayServerHarmonyOS::can_any_window_draw() const {
-	return window_can_draw_val;
+	return window_can_draw_val.load(std::memory_order_acquire);
 }
 
 // ---- events ----
@@ -367,6 +413,8 @@ void DisplayServerHarmonyOS::process_events() {
 
 // ---- cursor ----
 
+// 只记录形状：OHOS NDK 无原生光标接口，实际切换需经 ArkTS 侧的
+// @ohos.multimodalInput.pointer。FEATURE_CURSOR_SHAPE 保持 false。
 void DisplayServerHarmonyOS::cursor_set_shape(DisplayServerEnums::CursorShape p_shape) {
 	cursor_shape = p_shape;
 }
@@ -378,7 +426,10 @@ DisplayServerEnums::CursorShape DisplayServerHarmonyOS::cursor_get_shape() const
 // ---- mouse ----
 
 Point2i DisplayServerHarmonyOS::mouse_get_position() const {
-	return last_mouse_pos;
+	// Read from the input layer, which is the only place that learns of pointer
+	// movement. Mirroring it into a DisplayServer member left that member with
+	// no writer, so this used to return (0,0) forever.
+	return HarmonyOSInput::get_mouse_position();
 }
 
 BitField<MouseButtonMask> DisplayServerHarmonyOS::mouse_get_button_state() const {
@@ -387,8 +438,16 @@ BitField<MouseButtonMask> DisplayServerHarmonyOS::mouse_get_button_state() const
 }
 
 void DisplayServerHarmonyOS::mouse_set_mode(DisplayServerEnums::MouseMode p_mode) {
+	// OHOS NDK 没有指针捕获/隐藏接口（对应能力只在 ArkTS 侧的
+	// @ohos.multimodalInput.pointer），只有 VISIBLE 能真正生效。这里记录
+	// 未生效的请求，而不是静默吞掉 —— 否则引擎会按「已捕获」的假设继续处理
+	// 鼠标，而光标其实一直可见。
+	if (p_mode != DisplayServerEnums::MOUSE_MODE_VISIBLE) {
+		OH_LOG_WARN(LOG_APP, "[DS] mouse mode %{public}d unsupported on HarmonyOS, staying VISIBLE", (int)p_mode);
+	}
 }
 
+// GAPSCAN: ok 平台只支持 VISIBLE，理由见 mouse_set_mode
 DisplayServerEnums::MouseMode DisplayServerHarmonyOS::mouse_get_mode() const {
 	return DisplayServerEnums::MOUSE_MODE_VISIBLE;
 }
@@ -418,15 +477,15 @@ void DisplayServerHarmonyOS::notify_surface_changed(int p_width, int p_height) {
 }
 
 void DisplayServerHarmonyOS::notify_surface_created() {
-	window_can_draw_val = true;
+	window_can_draw_val.store(true, std::memory_order_release);
 }
 
 void DisplayServerHarmonyOS::notify_surface_destroyed() {
-	window_can_draw_val = false;
+	window_can_draw_val.store(false, std::memory_order_release);
 }
 
 void DisplayServerHarmonyOS::update_window_size(int p_width, int p_height) {
-	window_size = Size2i(p_width, p_height);
+	set_window_size(Size2i(p_width, p_height));
 	_window_position = Point2i(0, 0);
 
 	// Fire the rect-changed callback so the engine knows the window was resized.
@@ -515,8 +574,12 @@ void DisplayServerHarmonyOS::reset_window() {
 			return;
 		}
 		OH_LOG_INFO(LOG_APP, "[DS] reset_window: OHNativeWindow=%{public}p size=%{public}dx%{public}d",
-				(void *)oh_window, window_size.width, window_size.height);
+				(void *)oh_window, get_window_size().width, get_window_size().height);
 
+		// WindowPlatformData only carries the native window: surface_create()
+		// passes it straight to vkCreateSurfaceOHOS, which derives the extent
+		// from the window itself. The size is handed over separately via
+		// window_set_size() below, same as DisplayServerWindows does.
 		RenderingContextDriverVulkanHarmonyOS::WindowPlatformData wpd;
 		wpd.native_window = oh_window;
 
@@ -527,7 +590,7 @@ void DisplayServerHarmonyOS::reset_window() {
 		}
 		OH_LOG_INFO(LOG_APP, "[DS] reset_window: window_create OK");
 
-		ctx->window_set_size(window_id, window_size.width, window_size.height);
+		ctx->window_set_size(window_id, get_window_size().width, get_window_size().height);
 		ctx->window_set_vsync_mode(window_id, last_vsync_mode);
 
 		// Create the swap chain for the main window now that the native surface
@@ -540,7 +603,9 @@ void DisplayServerHarmonyOS::reset_window() {
 				ERR_PRINT("Failed to create Vulkan swap chain for main window.");
 				OH_LOG_ERROR(LOG_APP, "[DS] reset_window: screen_create FAILED err=%{public}d", (int)err);
 			} else {
-				OH_LOG_INFO(LOG_APP, "[DS] reset_window: screen_create OK");
+				OH_LOG_INFO(LOG_APP, "[DS] reset_window: screen_create OK, swapchain size=%{public}dx%{public}d",
+						rendering_device->screen_get_width(DisplayServerEnums::MAIN_WINDOW_ID),
+						rendering_device->screen_get_height(DisplayServerEnums::MAIN_WINDOW_ID));
 			}
 		} else {
 			OH_LOG_ERROR(LOG_APP, "[DS] reset_window: rendering_device is NULL");
@@ -564,6 +629,9 @@ void DisplayServerHarmonyOS::ime_selection(const Vector2i &p_selection) {
 	_ime_selection = p_selection;
 }
 
+// 只记录状态：完整的 IME 支持还需要 override ime_get_text / ime_get_selection
+// 并接入 ArkTS 侧的输入法框架。在那之前 FEATURE_IME 保持 false，引擎不会调用
+// 那两个未 override 的方法（基类实现会直接报错）。
 void DisplayServerHarmonyOS::window_set_ime_active(const bool p_active, DisplayServerEnums::WindowID p_window) {
 	_ime_active = p_active;
 }
@@ -576,7 +644,7 @@ void DisplayServerHarmonyOS::window_set_ime_position(const Point2i &p_pos, Displ
 
 DisplayServerHarmonyOS::DisplayServerHarmonyOS(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, DisplayServerEnums::Context p_context, int64_t p_parent_window, Error &r_error) {
 	rendering_driver = p_rendering_driver;
-	window_size = p_resolution;
+	set_window_size(p_resolution);
 	keep_screen_on = true;
 	_window_mode = p_mode;
 
@@ -634,6 +702,12 @@ DisplayServerHarmonyOS::DisplayServerHarmonyOS(const String &p_rendering_driver,
 	// Rendering context and device are initialized separately
 	// through check_vulkan_global_context() and reset_window()
 	// after the surface becomes available.
+
+	// Route engine-generated input events back through this DisplayServer so
+	// that per-window input callbacks fire. Without this registration
+	// _dispatch_input_events() is never called and window input callbacks stay
+	// silent. Mirrors DisplayServerWindows, which registers at the same point.
+	Input::get_singleton()->set_event_dispatch_function(_dispatch_input_events);
 
 	// Screen DPI 默认值 160（与 Godot 引擎基准 DPI 一致，即 mdpi 1:1 密度）。
 	// screen_refresh_rate_val 默认值 60.0f。

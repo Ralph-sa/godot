@@ -6,6 +6,7 @@
 #include "audio_driver_ohos.h"
 #include "dir_access_harmonyos.h"
 #include "file_access_harmonyos.h"
+#include "harmonyos_engine_logger.h"
 #include "joypad_harmonyos.h"
 
 #include "core/config/engine.h"
@@ -94,6 +95,11 @@ void OS_HarmonyOS::initialize() {
 	// Register the OHAudio audio driver so AudioServer can pick it up.
 	// Mirrors OS_Windows::initialize() registering AudioDriverWASAPI.
 	AudioDriverManager::add_driver(&driver_ohos);
+
+	// Mirror Godot's engine print/printerr/print_error output into hilog and
+	// a sandbox file so runtime errors (Vulkan swap chain, shaders, ...) are
+	// observable. StdLogger alone writes to stdout, which is lost on OHOS.
+	add_logger(memnew(HarmonyOSEngineLogger));
 
 #ifdef HARMONYOS_ENABLED
 	OH_LOG_INFO(LOG_APP, "OS_HarmonyOS::initialize()");
@@ -184,40 +190,18 @@ bool OS_HarmonyOS::_check_internal_feature_support(const String &p_feature) {
 	if (p_feature == "pc") {
 		return true;
 	}
-	if (p_feature == "system_fonts") {
-		// HarmonyOS 使用 musl libc，具备链接 fontconfig 的可能性。
-		// OHOS NDK 默认不包含 fontconfig 的 dev 包，但运行时系统镜像中
-		// 通常已预置 fontconfig 库（/system/lib64/libfontconfig.so）。
-		// 当前暂返回 true 声明能力；如运行时检测到 fontconfig 不可用，
-		// 需在 OS_Unix::get_system_fonts() 中降级为空列表。
-		return true;
-	}
+	// 注意：不要在这里声明 "system_fonts"。该能力要求 override
+	// get_system_fonts() / get_system_font_path()，而本平台并未 override —— 基类
+	// OS_Unix 的实现依赖 fontconfig，OHOS NDK 不提供其 dev 包。声明 true 会让
+	// 引擎去查询系统字体并拿到空结果，不如诚实返回 false 让它用内置字体。
+	// 后续若经 ArkTS 侧字体管理接口补上真实实现，再在此声明。
 	return false;
 }
 
-void OS_HarmonyOS::run() {
-	if (!main_loop) {
-		return;
-	}
-
-	main_loop->initialize();
-
-	while (true) {
-		if (joypad_harmonyos) {
-			joypad_harmonyos->process_events();
-		}
-		if (Main::iteration()) {
-			break;
-		}
-	}
-}
-
-bool OS_HarmonyOS::main_loop_iterate() {
-	if (!main_loop) {
-		return true;
-	}
-	return Main::iteration();
-}
+// 这里曾有 run() 与 main_loop_iterate() 两个方法，各自实现了一份帧循环，但
+// 都不是引擎虚函数、也无任何调用点 —— 本平台的实际入口是 harmonyos_main.cpp
+// 的 harmonyos_godot_start()，帧循环和手柄事件泵送都在那里。留着两份互相竞争
+// 的循环实现只会误导后来者，故删除。
 
 OS_HarmonyOS::OS_HarmonyOS() {
 #ifdef HARMONYOS_ENABLED

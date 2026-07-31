@@ -7,6 +7,8 @@
 #include "servers/display/display_server.h"
 #include "servers/display/native_menu.h"
 
+#include <atomic>
+
 class InputEvent;
 class TTS_HarmonyOS;
 
@@ -39,13 +41,16 @@ class DisplayServerHarmonyOS : public DisplayServer {
 
 protected:
 	int window_id = DisplayServerEnums::MAIN_WINDOW_ID;
-	Size2i window_size;
-	Vector2i last_mouse_pos;
+	// window_size is written on the JS/NAPI thread (notify_surface_changed)
+	// and read on the engine thread (window_get_size, reset_window), so it
+	// must be atomic to avoid a data race on the plain Size2i.
+	std::atomic<int> window_size_x{0};
+	std::atomic<int> window_size_y{0};
 	int screen_dpi_val = 160;
 	float screen_scale_val = 1.0f;
 	float screen_refresh_rate_val = 60.0f;
-	bool window_focused = true;
-	bool window_can_draw_val = false;
+	std::atomic<bool> window_focused{true};
+	std::atomic<bool> window_can_draw_val{false};
 	Point2i _window_position = Point2i(0, 0);
 	DisplayServerEnums::WindowMode _window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
 	TTS_HarmonyOS *tts = nullptr;
@@ -58,6 +63,11 @@ protected:
 
 public:
 	static DisplayServerHarmonyOS *get_singleton();
+
+	// Thread-safe window size accessors (JS/NAPI thread writes via
+	// notify_surface_changed, engine thread reads).
+	void set_window_size(const Size2i &p_size);
+	Size2i get_window_size() const;
 
 	virtual bool has_feature(DisplayServerEnums::Feature p_feature) const override;
 	virtual String get_name() const override;
@@ -150,6 +160,11 @@ public:
 	void notify_surface_changed(int p_width, int p_height);
 	void notify_surface_created();
 	void notify_surface_destroyed();
+
+	// Called when the app moves between foreground and background. This is the
+	// only source of focus information on HarmonyOS, and the only writer of
+	// window_focused.
+	void notify_window_focus(bool p_focused);
 
 	void update_window_size(int p_width, int p_height);
 

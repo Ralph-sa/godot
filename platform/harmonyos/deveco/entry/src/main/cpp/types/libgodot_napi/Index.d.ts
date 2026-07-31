@@ -9,7 +9,7 @@ export const godot_napi: {
   cleanup: () => number;
 
   /** Notify engine that rendering surface was created. */
-  onSurfaceCreated: (surfaceId: string) => number;
+  onSurfaceCreated: (surfaceId: string, width?: number, height?: number) => number;
 
   /** Initialize the native XComponent from the onLoad context object.
    * Must be called before onSurfaceCreated.

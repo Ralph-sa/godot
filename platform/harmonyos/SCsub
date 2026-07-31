@@ -5,7 +5,7 @@ Import("env")
 harmonyos_files = [
     "os_harmonyos.cpp",
     "harmonyos_main.cpp",
-    "harmonyos_dbg.cpp",
+    "harmonyos_engine_logger.cpp",
     "dir_access_harmonyos.cpp",
     "file_access_harmonyos.cpp",
     "display_server_harmonyos.cpp",

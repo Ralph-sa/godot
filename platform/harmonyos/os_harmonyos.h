@@ -71,8 +71,8 @@ public:
 
 	virtual Error get_entropy(uint8_t *r_buffer, int p_bytes) override;
 
-	void run();
-	bool main_loop_iterate();
+	// 本平台没有 run()/main_loop_iterate()：引擎入口是 harmonyos_main.cpp 的
+	// harmonyos_godot_start()，帧循环在那里驱动。
 
 	OS_HarmonyOS();
 	~OS_HarmonyOS();
