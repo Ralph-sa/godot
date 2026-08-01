@@ -34,6 +34,7 @@
 #include "key_mapping_ohos.h"
 
 #include "core/input/input_event.h"
+#include "core/math/math_funcs.h"
 #include "core/os/mutex.h"
 #include "core/string/print_string.h"
 #include "core/variant/variant.h"
@@ -267,7 +268,6 @@ void OHOS_XComponent::handle_mouse_event(OH_NativeXComponent *p_component, void 
 	}
 
 	Vector2 pos(mouse_event.x, mouse_event.y);
-	last_mouse_position = Point2i(static_cast<int>(mouse_event.x), static_cast<int>(mouse_event.y));
 
 	switch (mouse_event.action) {
 		case OH_NATIVEXCOMPONENT_MOUSE_PRESS:
@@ -287,12 +287,17 @@ void OHOS_XComponent::handle_mouse_event(OH_NativeXComponent *p_component, void 
 			break;
 		}
 		case OH_NATIVEXCOMPONENT_MOUSE_MOVE: {
-			// 鼠标移动 -> InputEventMouseMotion
+			// 鼠标移动 -> InputEventMouseMotion（相对位移增量计算，第 8 轮）
+			// 编辑器 3D 视口旋转/拖拽平移依赖 relative（鼠标捕获模式），
+			// 与 macOS 的 deltaX/deltaY（NSEvent mouseDelta）对应。
+			Vector2 relative = pos - Vector2(last_mouse_position);
+			last_mouse_position = Point2i(static_cast<int>(mouse_event.x), static_cast<int>(mouse_event.y));
+
 			Ref<InputEventMouseMotion> ev;
 			ev.instantiate();
 			ev->set_position(pos);
 			ev->set_global_position(pos);
-			ev->set_relative(Vector2()); // 无历史信息，轮次后续可增量计算
+			ev->set_relative(relative);
 			ev->set_velocity(Vector2());
 			ev->set_button_mask(_mouse_button_mask_from_flags(mouse_event.button));
 
@@ -379,6 +384,80 @@ void OHOS_XComponent::poll_events(const Callable &p_input_event_callback) {
 void OHOS_XComponent::clear_input_events() {
 	MutexLock lock(input_events_mutex);
 	input_events.clear();
+}
+
+// ---- 输入注入（第 8 轮：输入法/触控板，主线程调用） ----
+
+void OHOS_XComponent::push_input_event(const String &p_text, Key p_keycode, char32_t p_unicode) {
+	// 按键事件入队（IME 组合文本/删除/回车；ArkUI 主线程，引擎线程消费）。
+	// Godot InputEventKey 无文本字段，多字符文本拆为多个 unicode 按键事件
+	//（对应 macOS insertText 逐个字符插入 + keyDown/keyUp）。
+	auto push_pair = [&](bool p_pressed, char32_t p_cp) {
+		Ref<InputEventKey> ev;
+		ev.instantiate();
+		ev->set_pressed(p_pressed);
+		ev->set_keycode(p_keycode);
+		ev->set_physical_keycode(p_keycode);
+		ev->set_key_label(p_keycode);
+		ev->set_unicode(p_cp);
+
+		MutexLock lock(input_events_mutex);
+		input_events.push_back(ev);
+	};
+
+	if (p_keycode == Key::NONE) {
+		// 输入法提交文本：逐字符拆分（中文等多字节字符每个字符一个事件）
+		if (!p_text.is_empty()) {
+			for (int i = 0; i < p_text.length(); i++) {
+				push_pair(true, p_text[i]);
+			}
+		} else if (p_unicode != 0) {
+			push_pair(true, p_unicode);
+		}
+	} else {
+		push_pair(true, p_unicode);
+		push_pair(false, p_unicode);
+	}
+}
+
+void OHOS_XComponent::push_wheel_event(const Vector2 &p_delta) {
+	// 滚轮增量入队：触控板双指滚动由 ArkTS 手势识别（onTouch 双指滑动）后
+	// 经 engine_inject_wheel NAPI 注入；XComponent 原生鼠标事件不携带滚轮。
+	// 与 macOS scrollWheel 的 scrollingDeltaY 语义一致（向下为正）。
+	Ref<InputEventMouseButton> ev;
+	ev.instantiate();
+	Vector2 pos(last_mouse_position);
+	ev->set_position(pos);
+	ev->set_global_position(pos);
+
+	// 垂直滚动优先（Godot 编辑器滚轮滚动/缩放）
+	bool is_vertical = Math::abs(p_delta.y) >= Math::abs(p_delta.x);
+	MouseButton button = is_vertical ? MouseButton::WHEEL_DOWN : MouseButton::WHEEL_RIGHT;
+	float delta = is_vertical ? p_delta.y : p_delta.x;
+	if (delta < 0.0f) {
+		// 负增量（向上/向左滚动）转换为相反的滚轮按钮
+		button = is_vertical ? MouseButton::WHEEL_UP : MouseButton::WHEEL_LEFT;
+		delta = -delta;
+	}
+
+	// 每次滚动事件按 1 格处理（多格累加由引擎 factor 处理）
+	ev->set_button_index(button);
+	ev->set_button_mask(MouseButtonMask::NONE);
+	ev->set_factor(CLAMP(delta, 1.0f, 100.0f));
+
+	{
+		MutexLock lock(input_events_mutex);
+		ev->set_pressed(true);
+		input_events.push_back(ev);
+		Ref<InputEventMouseButton> ev_up;
+		ev_up.instantiate();
+		ev_up->set_position(pos);
+		ev_up->set_global_position(pos);
+		ev_up->set_button_index(button);
+		ev_up->set_button_mask(MouseButtonMask::NONE);
+		ev_up->set_pressed(false);
+		input_events.push_back(ev_up);
+	}
 }
 
 // ---- 静态工具 ----

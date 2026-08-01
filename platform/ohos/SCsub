@@ -31,6 +31,8 @@ files = [
     "crash_handler_ohos.cpp",
     # 音频：OHAudio 渲染流驱动（第 6 轮）
     "audio_driver_ohos.cpp",
+    # 输入法：inputmethod C API 中文输入（第 8 轮）
+    "ime_ohos.cpp",
 ]
 
 if env.editor_build:

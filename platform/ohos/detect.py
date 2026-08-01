@@ -154,10 +154,10 @@ def configure(env: "SConsEnvironment"):
     env.Prepend(CPPPATH=["#platform/ohos"])
     env.Append(CPPDEFINES=["OHOS_ENABLED", "UNIX_ENABLED"])
 
-    # 链接库：OHOS 系统库（native_window / vulkan / ohaudio / hilog_ndk / ace_ndk / z / dl / pthread）
+    # 链接库：OHOS 系统库（native_window / vulkan / ohaudio / inputmethod / hilog_ndk / ace_ndk / z / dl / pthread）
     # 注意：hilog_ndk、ace_ndk 与 ace_napi 在 OHOS SDK 中命名为 *.z.so（ELF 格式），
     # 需用 -l:精确文件名 链接；其余为标准 .so/.a。
-    env.Append(LIBS=["native_window", "vulkan", "ohaudio", "z", "dl", "pthread"])
+    env.Append(LIBS=["native_window", "vulkan", "ohaudio", "ohinputmethod", "z", "dl", "pthread"])
     env.Append(LINKFLAGS=["-l:libhilog_ndk.z.so", "-l:libace_ndk.z.so", "-l:libace_napi.z.so", "-l:librawfile.z.so"])
 
     # GLES3：OHOS 无 EGL 官方支持，强制禁用（即使命令行传入 opengl3=yes）

@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "ime_ohos.h"
 #include "ohos_window.h"
 #include "ohos_xcomponent.h"
 
@@ -94,6 +95,9 @@ private:
 
 	// 主窗口聚焦状态（由 XComponent focus 回调维护）
 	bool main_window_focused = false;
+
+	// 输入法（第 8 轮：中文输入，inputmethod C API 接入）
+	IME_OHOS *ime = nullptr;
 
 	// 鼠标模式（编辑器轨道控制用；warp 第 8 轮经 NAPI 模拟）
 	DisplayServerEnums::MouseMode mouse_mode = DisplayServerEnums::MOUSE_MODE_VISIBLE;
@@ -216,4 +220,12 @@ public:
 
 	// 更新屏幕列表（第 6 轮：@ohos.display getAllDisplays JSON 解析后注入）
 	void set_screens(const Vector<OHOS_ScreenInfo> &p_screens) { screens = p_screens; }
+
+	// ---- 输入法（第 8 轮：中文输入） ----
+	// 获取输入法实例（首次访问时惰性创建）
+	IME_OHOS *get_ime();
+	// 文本控件聚焦：附加输入法服务（window_set_input_text_callback 触发）
+	void ime_attach_for_text_input();
+	// 文本控件失焦/窗口失焦：分离输入法
+	void ime_detach_on_blur();
 };

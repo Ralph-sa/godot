@@ -132,6 +132,15 @@ public:
 	// 清空队列（引擎停止时避免残留事件）
 	void clear_input_events();
 
+	// ---- 输入注入（第 8 轮：输入法/触控板，主线程调用） ----
+	// 把一次按键入队到输入队列（IME 组合文本/删除/回车；ArkUI 主线程调用，
+	// 引擎线程 process_events 消费，保证线程安全）。
+	// p_text 非空时作为带文本的按键事件（文本控件直接插入，对应 macOS insertText）；
+	// 否则按 p_keycode 生成 pressed/released 键事件。
+	void push_input_event(const String &p_text, Key p_keycode, char32_t p_unicode = 0);
+	// 把滚轮增量入队（触控板双指滚动由 ArkTS 手势识别后注入，生成 WHEEL 事件）
+	void push_wheel_event(const Vector2 &p_delta);
+
 	// ---- 访问器 ----
 	OHNativeWindow *get_native_window() const { return native_window; }
 	Size2i get_size() const { return size; }

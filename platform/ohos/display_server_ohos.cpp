@@ -87,6 +87,11 @@ DisplayServerOHOS::~DisplayServerOHOS() {
 	if (ohos_ds_singleton == this) {
 		ohos_ds_singleton = nullptr;
 	}
+	// 释放输入法（内部 detach + 销毁 proxy/options）
+	if (ime) {
+		memdelete(ime);
+		ime = nullptr;
+	}
 	// 释放窗口对象
 	for (const KeyValue<DisplayServerEnums::WindowID, OHOS_Window *> &E : windows) {
 		memdelete(E.value);
@@ -243,6 +248,13 @@ void DisplayServerOHOS::notify_main_surface_focus(bool p_focused) {
 	// 窗口聚焦状态变化：触发 WINDOW_EVENT_FOCUS_IN/OUT
 	// （对应 macOS windowDidBecomeMain / windowDidResignMain）
 	main_window_focused = p_focused;
+	// 窗口聚焦：重新附加输入法（失焦时已分离）；失焦：分离输入法
+	// （文本控件不再接收组合文本）
+	if (p_focused) {
+		ime_attach_for_text_input();
+	} else {
+		ime_detach_on_blur();
+	}
 	if (!windows.has(DisplayServerEnums::MAIN_WINDOW_ID)) {
 		return;
 	}
@@ -255,9 +267,10 @@ void DisplayServerOHOS::notify_main_surface_focus(bool p_focused) {
 // ---- 光标与鼠标 ----
 
 void DisplayServerOHOS::cursor_set_shape(DisplayServerEnums::CursorShape p_shape) {
-	// 记录光标形状。原生光标（IBeam/手型等）在鸿蒙 XComponent 上由
-	// ArkUI 侧 SystemCursor 实现，第 8 轮通过 NAPI 同步（先记录状态）。
+	// 记录光标形状，并经 NAPI 桥请求 ArkTS 切换系统光标
+	//（@ohos.multimodalInput.pointer.setPointerStyle，对应 macOS NSCursor）。
 	cursor_shape = p_shape;
+	ohos_cursor_set_shape(static_cast<int>(p_shape));
 }
 
 DisplayServerEnums::CursorShape DisplayServerOHOS::cursor_get_shape() const {
@@ -420,6 +433,10 @@ void DisplayServerOHOS::window_set_input_event_callback(const Callable &p_callab
 void DisplayServerOHOS::window_set_input_text_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window) {
 	ERR_FAIL_COND_MSG(!windows.has(p_window), "Invalid window ID.");
 	windows[p_window]->set_input_text_callback(p_callable);
+	// 文本输入回调注册 = 编辑器文本控件获得输入焦点：
+	// 附加系统输入法服务，启用中文/日文等 IME 组合文本
+	//（对应 macOS Window 注册 input_text_callback 后 NSTextInputClient 生效）。
+	ime_attach_for_text_input();
 }
 
 void DisplayServerOHOS::window_set_drop_files_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window) {
@@ -559,7 +576,43 @@ bool DisplayServerOHOS::has_feature(DisplayServerEnums::Feature p_feature) const
 			return true;
 		case DisplayServerEnums::FEATURE_HIDPI:
 			return true;
+		case DisplayServerEnums::FEATURE_CURSOR_SHAPE:
+			// 系统光标形状（第 8 轮：@ohos.multimodalInput.pointer.setPointerStyle）
+			return true;
+		case DisplayServerEnums::FEATURE_IME:
+			// 输入法（第 8 轮：inputmethod C API 实现中文/日文等 IME）
+			return true;
 		default:
 			return false;
+	}
+}
+
+// ---- 输入法（第 8 轮：中文输入） ----
+
+IME_OHOS *DisplayServerOHOS::get_ime() {
+	// 惰性创建输入法实例（engine 启动后首次文本输入聚焦时初始化）
+	if (!ime) {
+		ime = memnew(IME_OHOS);
+	}
+	return ime;
+}
+
+void DisplayServerOHOS::ime_attach_for_text_input() {
+	// 文本控件聚焦：附加系统输入法服务
+	//（对应 macOS Window 的 input_text_callback 注册后，输入法自动启用）
+	IME_OHOS *ime_svc = get_ime();
+	Error err = ime_svc->attach();
+	if (err == OK) {
+		// 主窗口聚焦且为触屏模式时可请求软键盘；PC 物理键盘由输入法
+		// 服务自动跟随（AttachOptions showKeyboard=false）。
+		print_verbose("DisplayServerOHOS: IME attached for text input.");
+	}
+}
+
+void DisplayServerOHOS::ime_detach_on_blur() {
+	// 窗口失焦/文本控件失焦：分离输入法，避免候选框残留
+	if (ime && ime->is_attached()) {
+		ime->detach();
+		print_verbose("DisplayServerOHOS: IME detached on blur.");
 	}
 }

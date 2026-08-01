@@ -26,8 +26,10 @@ import { pasteboard } from '@ohos.pasteboard';
 import { picker } from '@ohos.file.picker';
 // 窗口模式（第 5 轮：全屏/最大化经 @ohos.window 应用）
 import { window } from '@ohos.window';
-// 系统指针（第 7 轮：鼠标捕获/隐藏）
+// 系统指针（第 7 轮：鼠标捕获/隐藏；第 8 轮：光标形状 setPointerStyle）
 import { pointer } from '@ohos.multimodalInput.pointer';
+// 输入设备（第 8 轮：手柄枚举 inputDevice.getDeviceList）
+import { inputDevice } from '@ohos.multimodalInput.inputDevice';
 
 @Entry
 @Component
@@ -35,6 +37,10 @@ struct Index {
   // XComponent 控制器
   private xcomponentController: XComponentController = new XComponentController();
   @State engineStarted: boolean = false;
+  // 主窗口 ID（cursor.setPointerStyle 需要；onAppear 时获取）
+  private mainWindowId: number = -1;
+  // 触控板双指手势跟踪（第 8 轮：双指中心点增量 -> 滚轮注入）
+  private touchCenter: Array<number> = [];
 
   build() {
     Column() {
@@ -73,6 +79,11 @@ struct Index {
           godot.dispose();
           this.engineStarted = false;
         })
+        .onTouch((event: TouchEvent) => {
+          // 触控板/触屏手势（第 8 轮）：双指滑动识别为滚轮事件注入引擎
+          // （XComponent 原生鼠标事件不携带滚轮；对应 macOS scrollWheel）
+          this.handleTouchGesture(event);
+        })
         .onAppear(() => {
           // 页面出现：注册剪贴板回调 + 文件选择器处理（@ohos.pasteboard / @ohos.file.picker）
           godot.registerClipboard(
@@ -96,8 +107,18 @@ struct Index {
           godot.registerPointerHandler((visible: boolean) => {
             this.setPointerVisible(visible);
           });
+          // 光标形状处理器（第 8 轮：pointer.setPointerStyle）
+          godot.registerCursorHandler((shape: number) => {
+            this.setCursorShape(shape);
+          });
+          // 手柄设备枚举处理器（第 8 轮：inputDevice.getDeviceList 过滤 joystick）
+          godot.registerGamepadHandler(() => {
+            this.enumerateGamepads();
+          });
           // 屏幕枚举：查询全部屏幕并回传引擎（多屏支持）
           this.updateDisplays();
+          // 主窗口 ID（光标样式设置用）
+          this.queryMainWindowId();
         })
         .width('100%')
         .height('100%')
@@ -311,5 +332,114 @@ struct Index {
     } catch (e) {
       // 设置失败：忽略
     }
+  }
+
+  // ---- 光标形状（第 8 轮，@ohos.multimodalInput.pointer.setPointerStyle） ----
+
+  // 查询主窗口 ID（pointer.setPointerStyle 需要）
+  private queryMainWindowId(): void {
+    try {
+      window.getLastWindow(getContext(this)).then((win: window.Window) => {
+        this.mainWindowId = win.getWindowProperties().id;
+      }).catch(() => {
+        this.mainWindowId = -1;
+      });
+    } catch (e) {
+      this.mainWindowId = -1;
+    }
+  }
+
+  // Godot CursorShape -> OHOS PointerStyle 映射（编辑器系统光标）
+  private cursorShapeMap: Map<number, number> = new Map<number, number>([
+    [0, pointer.PointerStyle.DEFAULT],            // CURSOR_ARROW -> 默认箭头
+    [1, pointer.PointerStyle.TEXT_CURSOR],        // CURSOR_IBEAM -> 文本光标
+    [2, pointer.PointerStyle.HAND_POINTING],      // CURSOR_POINTING_HAND -> 手型
+    [3, pointer.PointerStyle.CROSS],              // CURSOR_CROSS -> 十字
+    [4, pointer.PointerStyle.DEFAULT],            // CURSOR_WAIT -> 默认（无等待动画）
+    [5, pointer.PointerStyle.DEFAULT],            // CURSOR_BUSY
+    [6, pointer.PointerStyle.MOVE],               // CURSOR_DRAG -> 移动
+    [7, pointer.PointerStyle.HAND_OPEN],          // CURSOR_CAN_DROP -> 张开手
+    [8, pointer.PointerStyle.CURSOR_FORBID],      // CURSOR_FORBIDDEN -> 禁止
+    [9, pointer.PointerStyle.RESIZE_UP_DOWN],     // CURSOR_VSIZE -> 垂直缩放
+    [10, pointer.PointerStyle.RESIZE_LEFT_RIGHT], // CURSOR_HSIZE -> 水平缩放
+    [11, pointer.PointerStyle.NORTH_EAST_SOUTH_WEST], // CURSOR_BDIAGSIZE
+    [12, pointer.PointerStyle.NORTH_WEST_SOUTH_EAST], // CURSOR_FDIAGSIZE
+    [13, pointer.PointerStyle.MOVE],              // CURSOR_MOVE
+    [14, pointer.PointerStyle.RESIZE_UP_DOWN],    // CURSOR_VSPLIT
+    [15, pointer.PointerStyle.RESIZE_LEFT_RIGHT], // CURSOR_HSPLIT
+    [16, pointer.PointerStyle.HELP],              // CURSOR_HELP
+  ]);
+
+  // 切换系统光标形状（引擎 cursor_set_shape 回调）
+  private setCursorShape(shape: number): void {
+    if (this.mainWindowId < 0) {
+      return; // 窗口 ID 未就绪
+    }
+    let style = this.cursorShapeMap.get(shape);
+    if (style == undefined) {
+      style = pointer.PointerStyle.DEFAULT;
+    }
+    try {
+      pointer.setPointerStyle(this.mainWindowId, style);
+    } catch (e) {
+      // 光标设置失败：忽略
+    }
+  }
+
+  // ---- 触控板手势（第 8 轮，双指滑动 -> 滚轮注入） ----
+
+  // 双指中心点增量识别为滚轮事件（触控板滚动；单指触摸仍由引擎处理）
+  private handleTouchGesture(event: TouchEvent): void {
+    let touches = event.touches;
+    if (touches.length == 2) {
+      let cx = (touches[0].x + touches[1].x) / 2.0;
+      let cy = (touches[0].y + touches[1].y) / 2.0;
+      if (this.touchCenter.length == 2) {
+        let dx = cx - this.touchCenter[0];
+        let dy = cy - this.touchCenter[1];
+        // 阈值过滤抖动；增量缩放为滚轮格数（真机联调可调整系数）
+        if (Math.abs(dx) > 0.8 || Math.abs(dy) > 0.8) {
+          godot.injectWheel(dx * 0.5, dy * 0.5);
+        }
+      }
+      this.touchCenter = [cx, cy];
+    } else {
+      this.touchCenter = [];
+    }
+  }
+
+  // ---- 手柄设备枚举（第 8 轮，@ohos.multimodalInput.inputDevice） ----
+
+  // 枚举全部输入设备，过滤 joystick（手柄）后回传引擎
+  private enumerateGamepads(): void {
+    let deviceList: Array<Object> = [];
+    inputDevice.getDeviceList().then((ids: Array<number>) => {
+      let jobs: Array<Promise<void>> = [];
+      for (let i = 0; i < ids.length; i++) {
+        let deviceId = ids[i];
+        jobs.push(new Promise<void>((resolve) => {
+          inputDevice.getDeviceInfo(deviceId).then((info: inputDevice.InputDeviceData) => {
+            // SourceType 为字符串类型：设备能力数组 sources 含 'joystick' 即为手柄
+            let isJoystick = info.sources != undefined && info.sources.indexOf('joystick') >= 0;
+            if (isJoystick) {
+              deviceList.push({
+                id: deviceId,
+                name: info.name,
+                guid: 'ohos-' + deviceId + '-' + info.name.replace(/[^A-Za-z0-9]/g, '')
+              });
+            }
+            resolve();
+          }).catch(() => {
+            resolve();
+          });
+        }));
+      }
+      Promise.all(jobs).then(() => {
+        godot.gamepadDevices(JSON.stringify(deviceList));
+      });
+    }).catch(() => {
+      // 枚举失败：引擎保持无手柄状态
+      godot.gamepadDevices('[]');
+    });
   }
 }

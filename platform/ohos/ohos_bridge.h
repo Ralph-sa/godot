@@ -78,3 +78,25 @@ void ohos_subwindow_set_visible(int p_id, bool p_visible);
 // ---- 指针可见性桥（第 7 轮：@ohos.multimodalInput.pointer） ----
 // 鼠标捕获/隐藏（对应 macOS CGDisplayHideCursor / CGAssociateMouseAndMouseCursorPosition）
 void ohos_mouse_set_visible(bool p_visible);
+
+// ---- 光标形状桥（第 8 轮：@ohos.multimodalInput.pointer.setPointerStyle） ----
+// 请求 ArkTS 切换系统光标形状（对应 macOS NSCursor / resetCursorRects）。
+// p_shape 为 DisplayServerEnums::CursorShape 枚举值，由 ArkTS 映射到 PointerStyle。
+void ohos_cursor_set_shape(int p_shape);
+
+// ---- 手柄设备枚举桥（第 8 轮：@ohos.multimodalInput.inputDevice） ----
+// 请求 ArkTS 枚举全部输入设备（keyboard/mouse/touchpad/joystick 等），
+// 过滤 joystick 设备后经 engine_gamepad_devices 回传（对应 macOS IOHIDManager 枚举）。
+void ohos_enumerate_gamepads();
+
+// ---- 输入法桥（第 8 轮：inputmethod C API，中文输入） ----
+// 编辑器文本控件聚焦时由 DisplayServerOHOS 调用，请求附加系统输入法服务
+//（对应 macOS NSTextInputClient / Windows IMM32 IME）。
+void ohos_ime_attach();
+// 文本控件失焦/窗口失焦时分离输入法
+void ohos_ime_detach();
+// 请求显示/隐藏软键盘（2in1 触屏场景；物理键盘场景键盘自动跟随输入法）
+void ohos_ime_show_keyboard();
+void ohos_ime_hide_keyboard();
+// 同步编辑器文本光标矩形（vp）给输入法，用于候选框定位
+void ohos_ime_notify_cursor_rect(int p_x, int p_y, int p_w, int p_h);

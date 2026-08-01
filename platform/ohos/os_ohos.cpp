@@ -37,6 +37,7 @@
 #include "core/string/ustring.h"
 #include "display_server_ohos.h"
 #include "main/main.h"
+#include "ohos_bridge.h"
 #include "servers/audio/audio_driver.h"
 
 #include <sys/utsname.h>
@@ -89,7 +90,11 @@ void OS_OHOS::finalize() {
 }
 
 void OS_OHOS::initialize_joypads() {
-	// 手柄支持（OH Gamepad）留待第 8 轮（完善期）实现
+	// 手柄支持（第 8 轮）：经 NAPI 桥请求 ArkTS 枚举输入设备
+	//（@ohos.multimodalInput.inputDevice.getDeviceList），过滤 joystick 设备后
+	// 由 engine_gamepad_devices 回传，Input 单例 joy_connection_changed 上报。
+	// 对应 macOS IOHIDManager 的 HID 设备枚举（GodotJoypad 连接回调）。
+	ohos_enumerate_gamepads();
 }
 
 void OS_OHOS::set_main_loop(MainLoop *p_main_loop) {

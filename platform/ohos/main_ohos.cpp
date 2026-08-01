@@ -36,9 +36,11 @@
 #include "rendering_context_driver_vulkan_ohos.h"
 
 #include "core/string/print_string.h"
+#include "core/input/input.h"
 #include "core/os/mutex.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
+#include "core/math/vector2.h"
 #include "main/main.h"
 
 #include <napi/native_api.h>
@@ -398,6 +400,150 @@ void ohos_mouse_set_visible(bool p_visible) {
 	napi_call_function(pointer_env, global, fn, 1, argv, &result);
 }
 
+// ---- 光标形状桥（第 8 轮：@ohos.multimodalInput.pointer.setPointerStyle） ----
+// DisplayServer::cursor_set_shape 触发，请求 ArkTS 切换系统光标形状
+//（对应 macOS NSCursor set / resetCursorRects）。
+static napi_env cursor_env = nullptr;
+static napi_ref cursor_handler_ref = nullptr;
+static Mutex cursor_mutex;
+
+// ArkTS 注册光标处理函数 (shape) => void
+static napi_value engine_register_cursor_handler(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	MutexLock lock(cursor_mutex);
+	cursor_env = env;
+	if (cursor_handler_ref) {
+		napi_delete_reference(env, cursor_handler_ref);
+	}
+	napi_create_reference(env, args[0], 1, &cursor_handler_ref);
+	return nullptr;
+}
+
+void ohos_cursor_set_shape(int p_shape) {
+	// 请求 ArkTS 切换系统光标（Godot CursorShape -> PointerStyle 映射在 ArkTS 侧）
+	MutexLock lock(cursor_mutex);
+	if (!cursor_env || !cursor_handler_ref) {
+		return;
+	}
+	napi_value global = nullptr;
+	napi_get_global(cursor_env, &global);
+	napi_value fn = nullptr;
+	napi_get_reference_value(cursor_env, cursor_handler_ref, &fn);
+	napi_value shape = nullptr;
+	napi_create_int32(cursor_env, p_shape, &shape);
+	napi_value argv[1] = { shape };
+	napi_value result = nullptr;
+	napi_call_function(cursor_env, global, fn, 1, argv, &result);
+}
+
+// ---- 滚轮注入（第 8 轮：触控板双指滚动手势 -> 引擎滚轮事件） ----
+// XComponent 原生鼠标事件不携带滚轮，触控板双指滚动由 ArkTS 手势识别后
+// 经本 NAPI 注入滚轮增量（对应 macOS scrollWheel scrollingDelta）。
+static napi_value engine_inject_wheel(napi_env env, napi_callback_info info) {
+	size_t argc = 2;
+	napi_value args[2];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	double dx = 0.0;
+	double dy = 0.0;
+	if (argc >= 1) {
+		napi_get_value_double(env, args[0], &dx);
+	}
+	if (argc >= 2) {
+		napi_get_value_double(env, args[1], &dy);
+	}
+	// 入队到 XComponent 输入队列（引擎线程 process_events 消费）
+	OHOS_XComponent *xc = OHOS_XComponent::get_instance();
+	if (xc) {
+		xc->push_wheel_event(Vector2(static_cast<float>(dx), static_cast<float>(dy)));
+	}
+	return nullptr;
+}
+
+// ---- 手柄设备枚举桥（第 8 轮：@ohos.multimodalInput.inputDevice） ----
+// 引擎初始化时请求 ArkTS 枚举全部输入设备，过滤 joystick 后回传
+//（对应 macOS IOHIDManagerCopyDevices / Android InputDevice.getDeviceIds）。
+static napi_env gamepad_env = nullptr;
+static napi_ref gamepad_handler_ref = nullptr;
+static Mutex gamepad_mutex;
+
+// ArkTS 注册手柄枚举请求处理函数 () => void
+static napi_value engine_register_gamepad_handler(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	MutexLock lock(gamepad_mutex);
+	gamepad_env = env;
+	if (gamepad_handler_ref) {
+		napi_delete_reference(env, gamepad_handler_ref);
+	}
+	napi_create_reference(env, args[0], 1, &gamepad_handler_ref);
+	return nullptr;
+}
+
+void ohos_enumerate_gamepads() {
+	// 请求 ArkTS 枚举输入设备（异步，结果经 engine_gamepad_devices 回传）
+	MutexLock lock(gamepad_mutex);
+	if (!gamepad_env || !gamepad_handler_ref) {
+		return;
+	}
+	napi_value global = nullptr;
+	napi_get_global(gamepad_env, &global);
+	napi_value fn = nullptr;
+	napi_get_reference_value(gamepad_env, gamepad_handler_ref, &fn);
+	napi_value result = nullptr;
+	napi_call_function(gamepad_env, global, fn, 0, nullptr, &result);
+}
+
+// ArkTS 回传手柄设备 JSON 数组（Index.ets: godot.gamepadDevices(json)）
+// json 形如 '[{"id":1,"name":"Gamepad","vendor":0,"product":0}, ...]'
+static napi_value engine_gamepad_devices(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	size_t len = 0;
+	napi_get_value_string_utf8(env, args[0], nullptr, 0, &len);
+	Vector<char> buf;
+	buf.resize(len + 1);
+	napi_get_value_string_utf8(env, args[0], buf.ptrw(), len + 1, &len);
+
+	// 解析 JSON 设备列表并上报 Input 单例（joy_connection_changed）
+	if (!Input::get_singleton()) {
+		return nullptr; // 引擎尚未初始化 Input
+	}
+	Variant json = JSON::parse_string(String::utf8(buf.ptr()));
+	if (json.get_type() != Variant::ARRAY) {
+		return nullptr;
+	}
+	Array devices = json;
+	for (int i = 0; i < devices.size(); i++) {
+		if (devices[i].get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary d = devices[i];
+		int id = static_cast<int>(d["id"]);
+		String name = d.has("name") ? String(d["name"]) : "OHOS Gamepad";
+		String guid = d.has("guid") ? String(d["guid"]) : String();
+		if (guid.is_empty()) {
+			// 无 GUID 时用设备名生成稳定 GUID（Input 层手柄映射用）
+			guid = name.md5_text();
+		}
+		Input::get_singleton()->joy_connection_changed(id, true, name, guid);
+		print_verbose(vformat("OHOS: gamepad %d \"%s\" connected", id, name));
+	}
+	return nullptr;
+}
+
 // ---- 屏幕枚举桥（第 6 轮：@ohos.display getAllDisplays） ----
 // ArkTS 侧在 onAppear 时查询全部屏幕（位置/尺寸/DPI/刷新率）并经
 // godot.updateDisplays(JSON) 回传，C++ 解析后注入 DisplayServerOHOS。
@@ -744,9 +890,13 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "updateDisplays", nullptr, engine_update_displays, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "registerSubWindowHandler", nullptr, engine_register_subwindow_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "registerPointerHandler", nullptr, engine_register_pointer_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "registerCursorHandler", nullptr, engine_register_cursor_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "injectWheel", nullptr, engine_inject_wheel, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "registerGamepadHandler", nullptr, engine_register_gamepad_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "gamepadDevices", nullptr, engine_gamepad_devices, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 14, props);
+	napi_define_properties(env, exports, 18, props);
 	return exports;
 }
 

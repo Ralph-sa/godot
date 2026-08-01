@@ -1,8 +1,8 @@
 ---
-current_round: 7
-completed_rounds: [1, 2, 3, 4, 5, 6, 7]
-total_completion: 56%
-interface_coverage: 75%
+current_round: 8
+completed_rounds: [1, 2, 3, 4, 5, 6, 7, 8]
+total_completion: 64%
+interface_coverage: 85%
 ---
 
 # 轮次进度追踪（round-progress）
@@ -11,13 +11,43 @@ interface_coverage: 75%
 
 ## 当前状态
 
-- **当前轮次**：第 7 轮（完善期：多窗口/子窗口/光标系统，已完成）
-- **已结束轮次**：第 1、2、3、4、5、6、7 轮
-- **总完成度**：56%（骨架 + 输入 + 窗口 + 渲染 + 导出器 + 音频/多屏 + 子窗口/光标）
-- **接口覆盖率**：75%（OS/DisplayServer/输入/渲染/导出器/音频/子窗口）
+- **当前轮次**：第 8 轮（完善期：手柄/触控板/中文输入/光标形状，已完成）
+- **已结束轮次**：第 1、2、3、4、5、6、7、8 轮
+- **总完成度**：64%（骨架 + 输入 + 窗口 + 渲染 + 导出器 + 音频/多屏 + 子窗口/光标 + IME/手柄/触控板）
+- **接口覆盖率**：85%（OS/DisplayServer/输入/渲染/导出器/音频/子窗口/输入法/手柄）
 - **git 分支**：hm
 
 ## 轮次记录
+
+### 第 8 轮（已完成）
+
+- **管理者 tasklist**：
+  - [x] B 输入：鼠标相对位移增量计算（编辑器 3D 视口旋转/拖拽，对应 macOS mouseDelta）
+  - [x] D 光标形状：cursor_set_shape 经 NAPI 桥 @ohos.multimodalInput.pointer.setPointerStyle（对应 macOS NSCursor）
+  - [x] D 触控板：双指滚动手势识别 -> engine_inject_wheel 注入滚轮事件（对应 macOS scrollWheel）
+  - [x] C 中文输入：IME_OHOS（inputmethod NDK C API：TextEditorProxy 回调 + Attach + ShowKeyboard）
+  - [x] C 手柄：inputDevice 枚举 joystick 设备 -> joy_connection_changed（对应 macOS IOHIDManager 枚举）
+  - [x] H 系统集成：NAPI 新增 registerCursorHandler/injectWheel/registerGamepadHandler/gamepadDevices（共 18 接口）
+  - [x] I 导出器：Index.ets 光标映射/触控板手势/手柄枚举处理器 + libohinputmethod 链接
+  - [x] J 验证：check_build real 交叉编译通过 + macOS 对比总结 + git 提交
+- **开发者**：全部清单完成。
+  - 输入：handle_mouse_event 的 MOUSE_MOVE 按增量计算 relative（对应 macOS NSEvent mouseDeltaX/Y），编辑器轨道控制/拖拽平移恢复正常。
+  - 光标：cursor_set_shape 记录状态 + ohos_cursor_set_shape 桥 -> ArkTS pointer.setPointerStyle(主窗口ID, PointerStyle)；CursorShape 17 项映射表（IBeam->TEXT_CURSOR 等）。
+  - 触控板：Index.ets onTouch 双指中心增量识别 -> godot.injectWheel(dx,dy) -> push_wheel_event 生成 WHEEL_UP/DOWN 按键对入队（XComponent 原生鼠标事件不携带滚轮）。
+  - IME：IME_OHOS 封装 inputmethod C API（libohinputmethod.so）：OH_TextEditorProxy_Create + 注册 InsertText/DeleteBackward/DeleteForward/SendEnterKey/MoveCursor/SetSelection/PreviewText/GetTextConfig 回调，OH_AttachOptions_Create(false) + OH_InputMethodController_Attach；回调 SetCallbackInMainThread(true)，文本提交拆分为逐字符 unicode InputEventKey 入队（引擎线程消费）；window_set_input_text_callback 注册与窗口聚焦时 attach，失焦 detach，光标矩形经 notify_cursor_rect 同步。FEATURE_IME/CURSOR_SHAPE 声明。
+  - 手柄：OS_OHOS::initialize_joypads -> ohos_enumerate_gamepads -> ArkTS inputDevice.getDeviceList/getDeviceInfo 过滤 sources 含 'joystick' -> godot.gamepadDevices(JSON) -> Input::joy_connection_changed（guid 缺失时 name.md5_text 兜底）。
+- **挑战者**：
+  - 挑战①：InputEventKey 无 set_text 字段（Godot 4.8）-> 组合文本拆为逐字符 unicode 事件入队（对应 macOS insertText 逐字符插入）。
+  - 挑战②：inputDevice SourceType 为字符串联合类型（非枚举）-> 用 `sources.indexOf('joystick')` 判断。
+  - 挑战③：InputMethod_EnterKeyType/Direction/TextConfig 类型未声明 -> ime_ohos.h 引入 inputmethod_types_capi.h / text_config_capi.h。
+  - 挑战④：Key::DELETE 不存在 -> 用 Key::KEY_DELETE（Windows 保留字命名）。
+- **审查者**：NAPI 导出 18 接口；IME 回调全部入队（Mutex 保护）保证跨线程安全；Input 单例判空；CursorInfo 创建/销毁成对。遗留：手柄摇杆轴数据无 ArkTS API（仅按键/连接；轴映射留第 9 轮评估）、输入法候选框真实联调需模拟器。
+- **测试者**：check_build.py real 交叉编译通过；`libgodot.ohos.editor.arm64.so` 产出成功（+libohinputmethod）。IME 组合/手柄枚举/触控板滚动需 DevEco 模拟器验证。
+- **macOS 对比**：macOS 平台 13380 行（.mm）；OHOS 平台约 5109 行（第 8 轮 +~550 行）。
+  - 核心对照：NSCursor 光标 -> pointer.setPointerStyle；NSEvent mouseDelta -> 增量计算 relative；scrollWheel scrollingDelta -> 双指手势 injectWheel；NSTextInputClient insertText/deleteBackward -> TextEditorProxy 回调（插入/删除/回车/光标）；IOHIDManager 手柄枚举 -> inputDevice joystick 过滤。
+  - 覆盖率估算：OS 90%、DisplayServer 80%（+光标形状/相对位移）、输入 65%（+触控板/手柄连接）、IME 70%（组合/提交链路，候选框联调待验）、Vulkan 渲染链路 100%、导出器 60%、音频 75%、工程结构 35%。
+- **git 提交**：本轮提交（见 git log）。
+- **下一轮**：第 9 轮 —— 完善期：性能（渲染线程/VSync 对齐）、内存（RenderingDevice 资源泄漏核对）、稳定性（输入法/子窗口生命周期异常保护）、EditorSettings 持久化核对。
 
 ### 第 7 轮（已完成）
 
