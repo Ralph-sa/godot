@@ -73,6 +73,9 @@ class DisplayServerOHOS : public DisplayServer {
 	// 垂直同步模式（默认开启）
 	DisplayServerEnums::VSyncMode vsync_mode = DisplayServerEnums::VSYNC_ENABLED;
 
+	// 屏幕刷新率（由 Index.ets 经 @ohos.display 注入，Hz）
+	float screen_refresh_rate = 60.0f;
+
 	// 窗口模式（默认窗口化；全屏/最大化经 NAPI 请求 ArkUI 窗口）
 	DisplayServerEnums::WindowMode window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
 
@@ -182,4 +185,6 @@ public:
 	// ---- 访问器 ----
 	OHOS_XComponent *get_main_xcomponent() const { return main_xcomponent; }
 	void set_main_xcomponent(OHOS_XComponent *p_xc) { main_xcomponent = p_xc; }
+	// 注入屏幕刷新率（Index.ets @ohos.display 传入）
+	void set_screen_refresh_rate(float p_rate) { screen_refresh_rate = p_rate; }
 };

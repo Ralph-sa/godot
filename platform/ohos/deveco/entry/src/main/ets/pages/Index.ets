@@ -16,6 +16,11 @@
 // 导入 C++ 侧 NAPI 模块（moduleName = "godot"，见 native 模块 CMake）
 import godot from 'libgodot.so';
 
+// 系统能力：语言/设备/显示信息（第 4 轮联调注入）
+import { System as i18nSystem } from '@ohos.i18n';
+import { deviceInfo } from '@ohos.deviceInfo';
+import { display } from '@ohos.display';
+
 @Entry
 @Component
 struct Index {
@@ -39,10 +44,18 @@ struct Index {
           // Surface 就绪后启动 Godot 引擎
           if (!this.engineStarted) {
             godot.initialize(this.getFilesDir(), this.getCacheDir(),
-              this.getSystemLanguage(), this.getModelName(), this.getScreenDensity());
+              this.getSystemLanguage(), this.getModelName(), this.getScreenDensity(), this.getRefreshRate());
             godot.start(this.getScreenWidth(), this.getScreenHeight());
             this.engineStarted = true;
           }
+        })
+        .onBlur(() => {
+          // 窗口失焦：通知引擎（XComponent focus 回调仅报告获得焦点）
+          godot.notifyFocus(false);
+        })
+        .onFocus(() => {
+          // 窗口获得焦点
+          godot.notifyFocus(true);
         })
         .onDestroy(() => {
           // 页面销毁：停止并释放引擎
@@ -71,7 +84,7 @@ struct Index {
   // 系统语言（@ohos.i18n）——用于 Godot 编辑器本地化
   private getSystemLanguage(): string {
     try {
-      return i18n.System.getSystemLanguage();
+      return i18nSystem.getSystemLanguage();
     } catch (e) {
       return 'en';
     }
@@ -93,6 +106,15 @@ struct Index {
       return display.densityDPI / 160.0;
     } catch (e) {
       return 1.0;
+    }
+  }
+
+  // 屏幕刷新率（@ohos.display refreshRate）
+  private getRefreshRate(): number {
+    try {
+      return display.getDefaultDisplaySync().refreshRate;
+    } catch (e) {
+      return 60.0;
     }
   }
 

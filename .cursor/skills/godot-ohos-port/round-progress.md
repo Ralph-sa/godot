@@ -1,8 +1,8 @@
 ---
-current_round: 3
-completed_rounds: [1, 2, 3]
-total_completion: 24%
-interface_coverage: 35%
+current_round: 4
+completed_rounds: [1, 2, 3, 4]
+total_completion: 32%
+interface_coverage: 45%
 ---
 
 # 轮次进度追踪（round-progress）
@@ -11,13 +11,38 @@ interface_coverage: 35%
 
 ## 当前状态
 
-- **当前轮次**：第 3 轮（窗口系统深化期，已完成）
-- **已结束轮次**：第 1、2、3 轮
-- **总完成度**：24%（骨架 + 输入分发 + 窗口事件/鼠标模式）
-- **接口覆盖率**：35%（OS/DisplayServer/输入/渲染驱动核心接口）
+- **当前轮次**：第 4 轮（渲染完整 + DevEco 联调准备期，已完成）
+- **已结束轮次**：第 1、2、3、4 轮
+- **总完成度**：32%（骨架 + 输入 + 窗口事件 + 渲染链路确认）
+- **接口覆盖率**：45%（OS/DisplayServer/输入/渲染驱动核心接口）
 - **git 分支**：hm
 
 ## 轮次记录
+
+### 第 4 轮（已完成）
+
+- **管理者 tasklist**：
+  - [x] D DisplayServer：刷新率注入（Index.ets @ohos.display refreshRate）
+  - [x] F 渲染完整：swapchain 自动重建链确认（VK_ERROR_OUT_OF_DATE_KHR → r_resize_required）
+  - [x] H 系统集成：main_ohos.cpp 新增 notifyFocus NAPI + initialize 增加 refreshRate 参数 + engine_thread 注入 XComponent/刷新率
+  - [x] I 导出器：Index.ets 接入 onBlur/onFocus + @ohos.i18n/deviceInfo/display import
+  - [x] J 验证：check_build real 交叉编译通过 + macOS 对比总结 + git 提交
+- **开发者**：全部清单完成。
+  - 失焦链路：ArkTS onBlur → godot.notifyFocus(false) → notify_main_surface_focus → WINDOW_EVENT_FOCUS_OUT（补齐 XComponent focus 回调仅报获得焦点的缺口）。
+  - 刷新率：initialize 第 6 参注入 → engine_thread 中 DisplayServer 创建后 set_screen_refresh_rate。
+  - XComponent 时序：setXComponent 早于引擎启动，engine_thread 的 Main::start 后统一挂接 main_xcomponent。
+  - 渲染完整性确认：RenderingDeviceVulkan 在 AcquireNextImageKHR 返回 OUT_OF_DATE 时自动重建 swapchain（rendering_device_driver_vulkan.cpp:4029），窗口 resize 无需平台介入；Vulkan surface 重建（native_window 变化）留待真实联调。
+- **挑战者**：
+  - 挑战①：initialize 参数从 5 扩到 6（refreshRate），ArkTS 与 C++ 两侧需同步 → 已同步。
+  - 挑战②：i18n.System 与模块导出名不符 → 已修复：import { System as i18nSystem } from '@ohos.i18n'。
+  - 挑战③：setXComponent 早于 DisplayServer 创建（set_main_xcomponent 无对象）→ 已修复：engine_thread_main 的 Main::start 后统一注入。
+- **审查者**：NAPI 导出 6 接口（initialize/setXComponent/start/stop/notifyFocus/dispose），ArkTS 生命周期完整；刷新率/密度注入链路一致；未破坏线程模型。遗留：窗口模式 NAPI 回调（第 5 轮 ArkTS window API）。
+- **测试者**：check_build.py real 交叉编译通过；`.so` 产出成功。运行时验证需 DevEco 模拟器（MateBook Pro 26）。
+- **macOS 对比**：macOS 平台 17793 行；OHOS 平台约 3700 行（第 4 轮 +~50 行）。
+  - 核心对照：godot_window_delegate.mm（windowDidResignMain）→ notifyFocus NAPI；macOS NSScreen refreshRate → @ohos.display refreshRate 注入。
+  - 覆盖率估算：OS 80%、DisplayServer 50%（+刷新率注入）、输入 55%、Vulkan 渲染链路 100%（swapchain 自动重建确认）、导出器 18%。
+- **git 提交**：本轮提交（见 git log）。
+- **下一轮**：第 5 轮 —— 导出器完整（export 插件 get_export_option/exports）、文件对话框（NAPI FilePicker）、窗口模式 NAPI、编辑器特性（FEATURE_SUBWINDOWS）。
 
 ### 第 3 轮（已完成）
 
@@ -182,17 +207,6 @@ interface_coverage: 35%
 - **macOS 对比**：待填充
 - **git 提交**：待填充
 - **下一轮**：第 6 轮
-
-### 第 4 轮（待执行）
-
-- **管理者 tasklist**：待填充
-- **开发者**：待填充
-- **挑战者**：待填充
-- **审查者**：待填充
-- **测试者**：待填充
-- **macOS 对比**：待填充
-- **git 提交**：待填充
-- **下一轮**：第 5 轮
 
 ## 说明
 

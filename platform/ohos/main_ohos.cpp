@@ -79,6 +79,9 @@ static OHOS_XComponent *ohos_xcomponent = nullptr;
 static std::thread engine_thread;
 static bool engine_running = false;
 
+// 屏幕刷新率（Index.ets @ohos.display 注入，DisplayServer 创建后生效）
+static float screen_refresh_rate = 60.0f;
+
 // ---- 内部工具：获取 NAPI 字符串参数 ----
 static std::string get_string_param(napi_env env, napi_value value) {
 	size_t len = 0;
@@ -102,6 +105,16 @@ static void engine_thread_main() {
 		return;
 	}
 	Main::start();
+
+	// DisplayServer 创建后注入：屏幕刷新率 + XComponent 宿主
+	// （setXComponent 调用早于引擎启动，此处统一挂接）
+	DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
+	if (ds) {
+		ds->set_screen_refresh_rate(screen_refresh_rate);
+		if (ohos_xcomponent) {
+			ds->set_main_xcomponent(ohos_xcomponent);
+		}
+	}
 
 	while (engine_running) {
 		// 单帧迭代：返回 true 表示引擎请求退出；false 表示继续
@@ -164,10 +177,10 @@ static napi_value engine_set_xcomponent(napi_env env, napi_callback_info info) {
 	return nullptr;
 }
 
-// 初始化引擎（ArkTS: engine.initialize(filesDir, cacheDir[, locale, model, density]) -> void）
+// 初始化引擎（ArkTS: engine.initialize(filesDir, cacheDir[, locale, model, density, refreshRate]) -> void）
 static napi_value engine_initialize(napi_env env, napi_callback_info info) {
-	size_t argc = 5;
-	napi_value args[5];
+	size_t argc = 6;
+	napi_value args[6];
 	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
 	if (argc >= 1) {
@@ -195,6 +208,14 @@ static napi_value engine_initialize(napi_env env, napi_callback_info info) {
 		double density = 1.0;
 		napi_get_value_double(env, args[4], &density);
 		os->set_screen_density(static_cast<float>(density));
+	}
+
+	// 注入屏幕刷新率（@ohos.display refreshRate）
+	if (argc >= 6) {
+		double refresh_rate = 60.0;
+		napi_get_value_double(env, args[5], &refresh_rate);
+		// 记录到静态变量，DisplayServer 创建后生效
+		screen_refresh_rate = static_cast<float>(refresh_rate);
 	}
 
 	// 注册 OHOS 显示驱动
@@ -241,6 +262,24 @@ static napi_value engine_stop(napi_env env, napi_callback_info info) {
 	return nullptr;
 }
 
+// 通知窗口聚焦状态（ArkTS: engine.notifyFocus(focused) -> void）
+// XComponent 的 RegisterFocusEventCallback 仅报告获得焦点，失焦需 ArkTS 侧
+// onBlur 回调通知（对应 macOS windowDidResignMain）。
+static napi_value engine_notify_focus(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	bool focused = false;
+	if (argc >= 1) {
+		napi_get_value_bool(env, args[0], &focused);
+	}
+	DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
+	if (ds) {
+		ds->notify_main_surface_focus(focused);
+	}
+	return nullptr;
+}
+
 // 释放引擎资源（ArkTS: engine.dispose() -> void）
 static napi_value engine_dispose(napi_env env, napi_callback_info info) {
 	// 清空 XComponent 输入队列并销毁
@@ -267,9 +306,10 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "setXComponent", nullptr, engine_set_xcomponent, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "start", nullptr, engine_start, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "stop", nullptr, engine_stop, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "notifyFocus", nullptr, engine_notify_focus, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 5, props);
+	napi_define_properties(env, exports, 6, props);
 	return exports;
 }
 

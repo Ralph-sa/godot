@@ -172,9 +172,9 @@ int DisplayServerOHOS::screen_get_dpi(int p_screen) const {
 }
 
 float DisplayServerOHOS::screen_get_refresh_rate(int p_screen) const {
-	// 刷新率：MateBook Pro 常见 60Hz/120Hz。完整实现第 4 轮通过
-	// OH_DisplayManager 查询（OH_DisplayManager_GetScreenSupportedVsyncCount）。
-	return 60.0;
+	// 刷新率：优先使用 Index.ets 注入的真实值（@ohos.display refreshRate），
+	// 兜底 60Hz。后续可经 OH_DisplayManager 主动查询。
+	return screen_refresh_rate;
 }
 
 void DisplayServerOHOS::process_events() {
