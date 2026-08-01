@@ -34,11 +34,14 @@ DEVECO_SDK_CANDIDATES = [
 
 def find_sdk_home() -> str:
     """探测 DEVECO_SDK_HOME，返回 SDK native 目录；未找到返回空串。"""
+    def has_clang(sdk: str) -> bool:
+        return os.path.isfile(os.path.join(sdk, "native", "llvm", "bin", "clang"))
+
     env = os.environ.get("DEVECO_SDK_HOME", "")
-    if env and os.path.isdir(os.path.join(env, "native", "llvm", "bin", "clang")):
+    if env and has_clang(env):
         return env
     for cand in DEVECO_SDK_CANDIDATES:
-        if os.path.isdir(os.path.join(cand, "native", "llvm", "bin", "clang")):
+        if has_clang(cand):
             return cand
     return ""
 
@@ -55,6 +58,20 @@ def run_scons_build(sdk_home: str, verbose: bool = False) -> tuple[bool, str]:
     env["CXXFLAGS"] = env["CFLAGS"]
 
     cmd = ["scons", "platform=ohos", "target=editor", "arch=arm64"]
+    # SCons 可能安装在用户 Python 目录（如 ~/Library/Python/3.9/bin/scons）
+    scons_exe = shutil.which("scons")
+    if not scons_exe:
+        for cand in [
+            os.path.expanduser("~/Library/Python/3.9/bin/scons"),
+            os.path.expanduser("~/Library/Python/3.11/bin/scons"),
+            "/opt/homebrew/bin/scons",
+        ]:
+            if os.path.isfile(cand):
+                scons_exe = cand
+                break
+    if not scons_exe:
+        return False, "未找到 scons 命令，请先安装 scons"
+    cmd[0] = scons_exe
     print(f"[check_build] 执行：{' '.join(cmd)}")
     try:
         proc = subprocess.run(

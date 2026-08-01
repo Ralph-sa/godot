@@ -672,7 +672,8 @@ namespace embree
     static int nThreads = -1;
     if (nThreads != -1) return nThreads;
 
-#if defined(__MACOSX__) || defined(__ANDROID__)
+#if defined(__MACOSX__) || defined(__ANDROID__) || defined(__MUSL__)
+    /* OHOS/musl 无 pthread_getaffinity_np，与 Android/Mac 一样用 sysconf */
     nThreads = sysconf(_SC_NPROCESSORS_ONLN); // does not work in Linux LXC container
     assert(nThreads);
 #elif defined(__EMSCRIPTEN__)

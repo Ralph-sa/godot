@@ -159,9 +159,11 @@ namespace embree
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Linux Platform
+/// 注意：musl libc（如 HarmonyOS/OHOS、部分容器环境）不提供
+/// pthread_getaffinity_np / pthread_setaffinity_np，因此排除 __MUSL__。
 ////////////////////////////////////////////////////////////////////////////////
 
-#if defined(__LINUX__) && !defined(__ANDROID__)
+#if defined(__LINUX__) && !defined(__ANDROID__) && !defined(__MUSL__)
 
 #include <fstream>
 #include <sstream>
@@ -254,10 +256,10 @@ namespace embree
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Android Platform
+/// Android / musl (HarmonyOS/OHOS) Platform
 ////////////////////////////////////////////////////////////////////////////////
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__MUSL__)
 
 namespace embree
 {
@@ -268,6 +270,7 @@ namespace embree
     CPU_ZERO(&cset);
     CPU_SET(affinity, &cset);
 
+    /* OHOS/musl 同 Android：sched_setaffinity 第一个参数传 0 表示当前线程 */
     sched_setaffinity(0, sizeof(cset), &cset);
   }
 }
@@ -396,7 +399,7 @@ namespace embree
     pthread_attr_destroy(&attr);
 
     /* set affinity */
-#if defined(__LINUX__) && !defined(__ANDROID__)
+#if defined(__LINUX__) && !defined(__ANDROID__) && !defined(__MUSL__)
     if (threadID >= 0) {
       cpu_set_t cset;
       CPU_ZERO(&cset);
@@ -411,7 +414,7 @@ namespace embree
       CPU_SET(threadID, &cset);
       pthread_setaffinity_np(*tid, sizeof(cset), &cset);
     }
-#elif defined(__ANDROID__)
+#elif defined(__ANDROID__) || defined(__MUSL__)
     if (threadID >= 0) {
       cpu_set_t cset;
       CPU_ZERO(&cset);
@@ -437,8 +440,9 @@ namespace embree
 
   /*! destroy a hardware thread by its handle */
   void destroyThread(thread_t tid) {
-#if defined(__ANDROID__)
-    FATAL("Can't destroy threads on Android."); // pthread_cancel not implemented.
+#if defined(__ANDROID__) || defined(__MUSL__)
+    /* Android 与 OHOS（musl）均未实现 pthread_cancel */
+    FATAL("Can't destroy threads on Android/OHOS."); // pthread_cancel not implemented.
 #else
     pthread_cancel(*(pthread_t*)tid);
     delete (pthread_t*)tid;
