@@ -1,8 +1,8 @@
 ---
-current_round: 6
-completed_rounds: [1, 2, 3, 4, 5, 6]
-total_completion: 48%
-interface_coverage: 65%
+current_round: 7
+completed_rounds: [1, 2, 3, 4, 5, 6, 7]
+total_completion: 56%
+interface_coverage: 75%
 ---
 
 # 轮次进度追踪（round-progress）
@@ -11,13 +11,38 @@ interface_coverage: 65%
 
 ## 当前状态
 
-- **当前轮次**：第 6 轮（音频/显示/物理存储完整，已完成）
-- **已结束轮次**：第 1、2、3、4、5、6 轮
-- **总完成度**：48%（骨架 + 输入 + 窗口 + 渲染 + 导出器 + 音频/多屏/存储）
-- **接口覆盖率**：65%（OS/DisplayServer/输入/渲染/导出器/音频驱动）
+- **当前轮次**：第 7 轮（完善期：多窗口/子窗口/光标系统，已完成）
+- **已结束轮次**：第 1、2、3、4、5、6、7 轮
+- **总完成度**：56%（骨架 + 输入 + 窗口 + 渲染 + 导出器 + 音频/多屏 + 子窗口/光标）
+- **接口覆盖率**：75%（OS/DisplayServer/输入/渲染/导出器/音频/子窗口）
 - **git 分支**：hm
 
 ## 轮次记录
+
+### 第 7 轮（已完成）
+
+- **管理者 tasklist**：
+  - [x] B 子窗口：create_sub_window/show_window/delete_sub_window（NAPI 桥 @ohos.window createWindow）
+  - [x] B 子窗口：window_set_title/size 同步原生子窗口
+  - [x] D 光标系统：mouse_set_mode 经 @ohos.multimodalInput.pointer.setPointerVisible 控制系统指针
+  - [x] H 系统集成：NAPI 新增 registerSubWindowHandler / registerPointerHandler（共 14 接口）
+  - [x] I 导出器：Index.ets 子窗口/指针处理器 + DevEco 工程资源补全（module.json5 权限、string/color/media/profile）
+  - [x] J 验证：check_build real 交叉编译通过 + macOS 对比总结 + git 提交
+- **开发者**：全部清单完成。
+  - 子窗口：create_sub_window 分配 ID（1000 起）→ 创建 OHOS_Window(SUB) → ohos_subwindow_create 桥；show_window/delete_sub_window 经桥同步可见性/销毁；window_set_title/size 对子窗口走桥更新原生窗口。
+  - 光标：mouse_set_mode 在记录状态基础上调用 ohos_mouse_set_visible → ArkTS pointer.setPointerVisible（对应 macOS CGDisplayHideCursor）。光标形状（cursor_set_shape）记录状态，编辑器内自绘光标由 Godot 渲染，系统形状无 API（注释说明）。
+  - DevEco 工程：module.json5 补 requestPermissions（INTERNET/DISTRIBUTED_DATASYNC）、deviceTypes 增加 tablet；补齐 string.json/color.json/main_pages.json/icon.svg。
+- **挑战者**：
+  - 挑战①：subwindow_call 参数数不匹配（create 需 x/y/w/h 四值）→ 桥签名扩为 7 参 (op,id,a,b,c,d,title)，ArkTS handler 同步。
+  - 挑战②：window.createWindow ctx 需显式传 getContext(this) → 已按 API 26 签名传入。
+  - 挑战③：子窗口 Vulkan 渲染（loadContent + XComponent）真实联调需 DevEco 模拟器验证 → 引擎侧窗口生命周期与桥已就绪，渲染承载留真实设备联调。
+- **审查者**：NAPI 导出 14 接口；子窗口生命周期（create/destroy 配对、memdelete 不泄漏）；桥调用均有 Mutex 保护。遗留：子窗口输入事件分发（第 9 轮）、光标捕获相对位移（第 8 轮）。
+- **测试者**：check_build.py real 交叉编译通过；`libgodot.ohos.editor.arm64.so` 产出成功。子窗口显示/光标隐藏需 DevEco 模拟器验证。
+- **macOS 对比**：macOS 平台 17793 行；OHOS 平台约 4550 行（第 7 轮 +~250 行）。
+  - 核心对照：macOS NSWindow 创建/显示/销毁 → ohos_subwindow_create/set_visible/destroy；NSTitle 同步 → setWindowTitle；CGDisplayHideCursor → pointer.setPointerVisible；NSPanel 浮窗 → WINDOW_TYPE_FLOAT 子窗口。
+  - 覆盖率估算：OS 88%、DisplayServer 75%（+子窗口全生命周期）、输入 55%、Vulkan 渲染链路 100%、导出器 60%、音频 70%、工程结构 30%。
+- **git 提交**：本轮提交（见 git log）。
+- **下一轮**：第 8 轮 —— 完善期：手柄（@ohos.multimodalInput.gamepad NAPI 轮询）、触控板（相对位移事件）、中文输入（IME 组合文本 @ohos.inputMethod）、公共目录 FilePicker 持久化授权。
 
 ### 第 6 轮（已完成）
 

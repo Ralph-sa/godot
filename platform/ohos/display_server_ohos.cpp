@@ -105,7 +105,10 @@ Size2i DisplayServerOHOS::window_get_size(DisplayServerEnums::WindowID p_window)
 void DisplayServerOHOS::window_set_title(const String &p_title, DisplayServerEnums::WindowID p_window) {
 	ERR_FAIL_COND_MSG(!windows.has(p_window), "Invalid window ID.");
 	windows[p_window]->set_title(p_title);
-	// 骨架期：不真正修改系统窗口标题（ArkUI Window 桥接后续轮次实现）
+	// 子窗口：经 NAPI 桥更新原生窗口标题（主窗口标题由 ArkUI 页面固定）
+	if (p_window != DisplayServerEnums::MAIN_WINDOW_ID) {
+		ohos_subwindow_set_title(p_window, p_title);
+	}
 }
 
 String DisplayServerOHOS::window_get_title(DisplayServerEnums::WindowID p_window) const {
@@ -117,6 +120,11 @@ void DisplayServerOHOS::window_set_size(const Size2i p_size, DisplayServerEnums:
 	ERR_FAIL_COND_MSG(!windows.has(p_window), "Invalid window ID.");
 	window_size = p_size;
 	windows[p_window]->resize(p_size);
+	if (p_window != DisplayServerEnums::MAIN_WINDOW_ID) {
+		// 子窗口：同步原生窗口尺寸
+		Rect2i r = windows[p_window]->get_rect();
+		ohos_subwindow_set_rect(p_window, r.position.x, r.position.y, p_size.x, p_size.y);
+	}
 	// 通知渲染驱动 swapchain 重建：XComponent 侧由 ArkUI 布局自动触发
 	// SurfaceChanged 回调，引擎侧在 on_surface_changed 中同步尺寸；
 	// 若 p_size 与当前 XComponent 尺寸不一致（程序化设置），
@@ -274,9 +282,13 @@ Point2i DisplayServerOHOS::mouse_get_position() const {
 
 void DisplayServerOHOS::mouse_set_mode(DisplayServerEnums::MouseMode p_mode) {
 	// 鼠标模式（可见/隐藏/捕获）：记录状态。
-	// XComponent 不提供原生捕获 API，第 8 轮通过 ArkUI 侧隐藏系统光标 +
-	// 相对位移事件模拟（对应 macOS CGDisplayHideCursor / CGAssociateMouseAndMouseCursorPosition）。
+	// 隐藏/捕获经 NAPI 桥调 @ohos.multimodalInput.pointer.setPointerVisible
+	// 隐藏系统光标（对应 macOS CGDisplayHideCursor）；相对位移捕获留待
+	// 第 8 轮经 XComponent 相对位移事件模拟。
 	mouse_mode = p_mode;
+	// 可见模式或部分捕获模式：系统指针可见；隐藏模式：隐藏系统指针
+	bool visible = p_mode != DisplayServerEnums::MOUSE_MODE_HIDDEN;
+	ohos_mouse_set_visible(visible);
 }
 
 DisplayServerEnums::MouseMode DisplayServerOHOS::mouse_get_mode() const {
@@ -335,6 +347,48 @@ Vector<DisplayServerEnums::WindowID> DisplayServerOHOS::get_window_list() const 
 DisplayServerEnums::WindowID DisplayServerOHOS::get_window_at_screen_position(const Point2i &p_position) const {
 	// 骨架期：只有主窗口，直接返回
 	return DisplayServerEnums::MAIN_WINDOW_ID;
+}
+
+// ---- 子窗口（第 7 轮：编辑器子窗口，经 NAPI 桥 @ohos.window 创建原生窗口） ----
+
+DisplayServerEnums::WindowID DisplayServerOHOS::create_sub_window(DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Rect2i &p_rect, bool p_exclusive, DisplayServerEnums::WindowID p_transient_parent) {
+	// 分配子窗口 ID（从 1000 起，避免与主窗口 0 冲突；对应 macOS 每次创建 NSWindow）
+	static DisplayServerEnums::WindowID sub_window_id_counter = 1000;
+	DisplayServerEnums::WindowID new_id = sub_window_id_counter++;
+
+	OHOS_Window *win = memnew(OHOS_Window(OHOS_Window::WINDOW_TYPE_SUB));
+	win->set_visible(false);
+	win->set_rect(p_rect);
+	win->set_window_mode(p_mode);
+	windows[new_id] = win;
+
+	// 请求 ArkTS 创建原生子窗口（@ohos.window createWindow）
+	ohos_subwindow_create(static_cast<int>(new_id), p_rect.position.x, p_rect.position.y, p_rect.size.x, p_rect.size.y);
+	print_verbose(vformat("DisplayServerOHOS: create sub window %d (%dx%d)", new_id, p_rect.size.x, p_rect.size.y));
+	return new_id;
+}
+
+void DisplayServerOHOS::show_window(DisplayServerEnums::WindowID p_id) {
+	ERR_FAIL_COND_MSG(!windows.has(p_id), "Invalid window ID.");
+	if (p_id == DisplayServerEnums::MAIN_WINDOW_ID) {
+		// 主窗口始终显示（ArkUI 页面承载），记录状态即可
+		windows[p_id]->set_visible(true);
+		return;
+	}
+	windows[p_id]->set_visible(true);
+	ohos_subwindow_set_visible(static_cast<int>(p_id), true);
+}
+
+void DisplayServerOHOS::delete_sub_window(DisplayServerEnums::WindowID p_id) {
+	ERR_FAIL_COND_MSG(!windows.has(p_id), "Invalid window ID.");
+	if (p_id == DisplayServerEnums::MAIN_WINDOW_ID) {
+		// 主窗口不可删除
+		return;
+	}
+	// 请求 ArkTS 销毁原生子窗口，并释放引擎侧窗口对象
+	ohos_subwindow_destroy(static_cast<int>(p_id));
+	memdelete(windows[p_id]);
+	windows.erase(p_id);
 }
 
 void DisplayServerOHOS::window_attach_instance_id(ObjectID p_instance, DisplayServerEnums::WindowID p_window) {

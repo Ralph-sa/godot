@@ -154,6 +154,11 @@ public:
 	virtual Vector<DisplayServerEnums::WindowID> get_window_list() const override;
 	virtual DisplayServerEnums::WindowID get_window_at_screen_position(const Point2i &p_position) const override;
 
+	// ---- 子窗口（第 7 轮：编辑器子窗口，经 NAPI 桥 @ohos.window 创建原生窗口） ----
+	virtual DisplayServerEnums::WindowID create_sub_window(DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Rect2i &p_rect = Rect2i(), bool p_exclusive = false, DisplayServerEnums::WindowID p_transient_parent = DisplayServerEnums::INVALID_WINDOW_ID) override;
+	virtual void show_window(DisplayServerEnums::WindowID p_id) override;
+	virtual void delete_sub_window(DisplayServerEnums::WindowID p_id) override;
+
 	virtual void window_attach_instance_id(ObjectID p_instance, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;
 	virtual ObjectID window_get_attached_instance_id(DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) const override;
 

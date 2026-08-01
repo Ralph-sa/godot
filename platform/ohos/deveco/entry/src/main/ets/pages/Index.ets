@@ -26,6 +26,8 @@ import { pasteboard } from '@ohos.pasteboard';
 import { picker } from '@ohos.file.picker';
 // 窗口模式（第 5 轮：全屏/最大化经 @ohos.window 应用）
 import { window } from '@ohos.window';
+// 系统指针（第 7 轮：鼠标捕获/隐藏）
+import { pointer } from '@ohos.multimodalInput.pointer';
 
 @Entry
 @Component
@@ -85,6 +87,14 @@ struct Index {
           });
           godot.registerWindowHandler((mode: number) => {
             this.applyWindowMode(mode);
+          });
+          // 子窗口处理器：引擎请求创建/调整原生子窗口（编辑器子窗口）
+          godot.registerSubWindowHandler((op: number, id: number, a: number, b: number, c: number, d: number, title: string) => {
+            this.handleSubWindow(op, id, a, b, c, d, title);
+          });
+          // 指针可见性处理器（鼠标捕获/隐藏）
+          godot.registerPointerHandler((visible: boolean) => {
+            this.setPointerVisible(visible);
           });
           // 屏幕枚举：查询全部屏幕并回传引擎（多屏支持）
           this.updateDisplays();
@@ -251,5 +261,55 @@ struct Index {
     }).finally(() => {
       godot.updateDisplays(JSON.stringify(displayList));
     });
+  }
+
+  // ---- 子窗口（第 7 轮，@ohos.window createWindow） ----
+
+  // 引擎请求的原生子窗口操作：0 创建 / 1 销毁 / 2 设标题 / 3 设位置尺寸 / 4 设可见
+  private handleSubWindow(op: number, id: number, a: number, b: number, c: number, d: number, title: string): void {
+    let key: string = 'godot_sub_' + id;
+    try {
+      if (op == 0) {
+        // 创建原生子窗口（编辑器子窗口：弹窗/工具面板）
+        window.createWindow(getContext(this), { name: key, windowType: window.WindowType.WINDOW_TYPE_FLOAT, ctx: getContext(this) }).then((win: window.Window) => {
+          win.moveWindowTo(a, b);
+          win.resize(c, d);
+        });
+      } else if (op == 1) {
+        window.findWindow(key).then((win: window.Window) => {
+          win.destroyWindow();
+        });
+      } else if (op == 2) {
+        window.findWindow(key).then((win: window.Window) => {
+          win.setWindowTitle(title);
+        });
+      } else if (op == 3) {
+        window.findWindow(key).then((win: window.Window) => {
+          win.moveWindowTo(a, b);
+          win.resize(c, d);
+        });
+      } else if (op == 4) {
+        window.findWindow(key).then((win: window.Window) => {
+          if (a == 1) {
+            win.showWindow();
+          } else {
+            win.hideWindow();
+          }
+        });
+      }
+    } catch (e) {
+      // 子窗口操作失败：忽略（引擎内窗口状态已记录）
+    }
+  }
+
+  // ---- 指针可见性（第 7 轮，@ohos.multimodalInput.pointer） ----
+
+  // 设置系统指针可见性（鼠标捕获/隐藏时调用）
+  private setPointerVisible(visible: boolean): void {
+    try {
+      pointer.setPointerVisible(visible);
+    } catch (e) {
+      // 设置失败：忽略
+    }
   }
 }

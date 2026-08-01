@@ -66,3 +66,15 @@ void ohos_window_set_always_on_top(bool p_enabled);
 // p_name 为 rawfile 内相对路径；p_dest 为目标沙盒路径。
 // 文件不存在返回 ERR_FILE_NOT_FOUND；资源管理器未初始化返回 ERR_UNAVAILABLE。
 Error ohos_extract_raw_file(const String &p_name, const String &p_dest);
+
+// ---- 子窗口桥（第 7 轮：@ohos.window createWindow） ----
+// 请求 ArkTS 创建/销毁/调整原生子窗口（编辑器子窗口：弹窗/工具面板）。
+void ohos_subwindow_create(int p_id, int p_x, int p_y, int p_w, int p_h);
+void ohos_subwindow_destroy(int p_id);
+void ohos_subwindow_set_title(int p_id, const String &p_title);
+void ohos_subwindow_set_rect(int p_id, int p_x, int p_y, int p_w, int p_h);
+void ohos_subwindow_set_visible(int p_id, bool p_visible);
+
+// ---- 指针可见性桥（第 7 轮：@ohos.multimodalInput.pointer） ----
+// 鼠标捕获/隐藏（对应 macOS CGDisplayHideCursor / CGAssociateMouseAndMouseCursorPosition）
+void ohos_mouse_set_visible(bool p_visible);

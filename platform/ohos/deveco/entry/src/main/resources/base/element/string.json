@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Godot Engine for HarmonyOS"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Godot Editor on HarmonyOS"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Godot"
+    },
+    {
+      "name": "reason_internet",
+      "value": "网络访问（引擎下载/编辑器插件/导出）"
+    },
+    {
+      "name": "reason_datasync",
+      "value": "跨设备数据同步（编辑器项目传输）"
+    }
+  ]
+}

@@ -293,6 +293,111 @@ void ohos_window_set_always_on_top(bool p_enabled) {
 	ohos_window_set_mode(p_enabled ? 1001 : 0);
 }
 
+// ---- 子窗口桥（第 7 轮：@ohos.window createWindow） ----
+// 引擎侧 create_sub_window 触发，经 NAPI 请求 ArkTS 创建/调整原生子窗口。
+// 统一 handler 签名：registerSubWindowHandler((op, id, a, b, c, title) => void)
+//   op: 0=create 1=destroy 2=setTitle 3=setRect 4=setVisible
+//   a/b/c: 随 op 而异的整型参数（x/y/宽/高/可见性）
+static napi_env subwindow_env = nullptr;
+static napi_ref subwindow_handler_ref = nullptr;
+static Mutex subwindow_mutex;
+
+static napi_value engine_register_subwindow_handler(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	MutexLock lock(subwindow_mutex);
+	subwindow_env = env;
+	if (subwindow_handler_ref) {
+		napi_delete_reference(env, subwindow_handler_ref);
+	}
+	napi_create_reference(env, args[0], 1, &subwindow_handler_ref);
+	return nullptr;
+}
+
+static void subwindow_call(int p_op, int p_id, int p_a, int p_b, int p_c, int p_d, const char *p_title) {
+	MutexLock lock(subwindow_mutex);
+	if (!subwindow_env || !subwindow_handler_ref) {
+		return;
+	}
+	napi_value global = nullptr;
+	napi_get_global(subwindow_env, &global);
+	napi_value fn = nullptr;
+	napi_get_reference_value(subwindow_env, subwindow_handler_ref, &fn);
+	napi_value op = nullptr, id = nullptr, a = nullptr, b = nullptr, c = nullptr, d = nullptr, title = nullptr;
+	napi_create_int32(subwindow_env, p_op, &op);
+	napi_create_int32(subwindow_env, p_id, &id);
+	napi_create_int32(subwindow_env, p_a, &a);
+	napi_create_int32(subwindow_env, p_b, &b);
+	napi_create_int32(subwindow_env, p_c, &c);
+	napi_create_int32(subwindow_env, p_d, &d);
+	napi_create_string_utf8(subwindow_env, p_title ? p_title : "", p_title ? strlen(p_title) : 0, &title);
+	napi_value argv[7] = { op, id, a, b, c, d, title };
+	napi_value result = nullptr;
+	napi_call_function(subwindow_env, global, fn, 7, argv, &result);
+}
+
+void ohos_subwindow_create(int p_id, int p_x, int p_y, int p_w, int p_h) {
+	subwindow_call(0, p_id, p_x, p_y, p_w, p_h, nullptr);
+}
+
+void ohos_subwindow_destroy(int p_id) {
+	subwindow_call(1, p_id, 0, 0, 0, 0, nullptr);
+}
+
+void ohos_subwindow_set_title(int p_id, const String &p_title) {
+	subwindow_call(2, p_id, 0, 0, 0, 0, p_title.utf8().get_data());
+}
+
+void ohos_subwindow_set_rect(int p_id, int p_x, int p_y, int p_w, int p_h) {
+	subwindow_call(3, p_id, p_x, p_y, p_w, p_h, nullptr);
+}
+
+void ohos_subwindow_set_visible(int p_id, bool p_visible) {
+	subwindow_call(4, p_id, p_visible ? 1 : 0, 0, 0, 0, nullptr);
+}
+
+// ---- 指针可见性桥（第 7 轮：@ohos.multimodalInput.pointer） ----
+static napi_env pointer_env = nullptr;
+static napi_ref pointer_handler_ref = nullptr;
+static Mutex pointer_mutex;
+
+static napi_value engine_register_pointer_handler(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	MutexLock lock(pointer_mutex);
+	pointer_env = env;
+	if (pointer_handler_ref) {
+		napi_delete_reference(env, pointer_handler_ref);
+	}
+	napi_create_reference(env, args[0], 1, &pointer_handler_ref);
+	return nullptr;
+}
+
+void ohos_mouse_set_visible(bool p_visible) {
+	// 设置系统指针可见性（对应 macOS CGDisplayHideCursor）
+	MutexLock lock(pointer_mutex);
+	if (!pointer_env || !pointer_handler_ref) {
+		return;
+	}
+	napi_value global = nullptr;
+	napi_get_global(pointer_env, &global);
+	napi_value fn = nullptr;
+	napi_get_reference_value(pointer_env, pointer_handler_ref, &fn);
+	napi_value visible = nullptr;
+	napi_get_boolean(pointer_env, p_visible, &visible);
+	napi_value argv[1] = { visible };
+	napi_value result = nullptr;
+	napi_call_function(pointer_env, global, fn, 1, argv, &result);
+}
+
 // ---- 屏幕枚举桥（第 6 轮：@ohos.display getAllDisplays） ----
 // ArkTS 侧在 onAppear 时查询全部屏幕（位置/尺寸/DPI/刷新率）并经
 // godot.updateDisplays(JSON) 回传，C++ 解析后注入 DisplayServerOHOS。
@@ -637,9 +742,11 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "registerWindowHandler", nullptr, engine_register_window_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "initResourceManager", nullptr, engine_init_resource_manager, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "updateDisplays", nullptr, engine_update_displays, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "registerSubWindowHandler", nullptr, engine_register_subwindow_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "registerPointerHandler", nullptr, engine_register_pointer_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 12, props);
+	napi_define_properties(env, exports, 14, props);
 	return exports;
 }
 
