@@ -107,8 +107,9 @@ macOS 平台对照基线：约 16,229 行（.mm/.h）。
 ## 六、编译验证
 
 - 每轮 `scripts/check_build.py` 执行**真实交叉编译**（`scons platform=ohos target=editor arch=arm64`，DevEco SDK clang 工具链），第 1~10 轮全部通过。
-- 产物：`bin/libgodot.ohos.editor.arm64.so`（约 140MB，含 IME/音频/rawfile 等系统库链接）。
-- ArkTS 侧由 DevEco Studio 工程承载，`hvigorw` 完整构建需在 DevEco Studio 中进行（当前 `deveco/` 为最小完整文件集）。
+- 产物：`bin/libgodot.ohos.editor.arm64.so`（约 140MB，含 IME/音频/rawfile 等系统库链接），拷贝为 `deveco/entry/libs/arm64-v8a/libgodot.so`。
+- **DevEco 工程 HAP 构建已验证通过**：使用 DevEco Studio 26.0.0 自带 hvigor 工具链（`build_hap.sh` 一键构建），ArkTS 层全部编译通过（修复 API 26 语法：@ohos 默认导入、DocumentSelectOptions、fileshare PolicyInfo、window 子窗口 API、未类型化对象字面量等），产物 `entry-default-unsigned.hap`（约 140MB，含 arm64-v8a libgodot.so 引擎库）。
+- 构建环境关键点：`DEVECO_SDK_HOME`/`OHOS_BASE_SDK_HOME` 指向 SDK 根目录、`JAVA_HOME` 指向 DevEco 内置 JBR（PackageHap 阶段需 Java）、`NODE_PATH` 指向 hvigor 内置依赖（避免双实例冲突）、`compileSdkVersion/compatibleSdkVersion/targetSdkVersion` 使用 `"26.0.0"` 点分格式（API 26 校验要求）。
 
 ## 七、覆盖率估算（最终）
 
@@ -120,7 +121,7 @@ macOS 平台对照基线：约 16,229 行（.mm/.h）。
 | Vulkan 渲染链路 | 100% | Surface 创建/swapchain 重建（引擎内部） |
 | 音频输出 | 75% | 输出链路完整；输入/中断处理待完善 |
 | 导出器 | 60% | 模板拷贝+pck+配置改写；DevEco 工程细节待完整模板 |
-| 工程结构 | 40% | 最小文件集，生产化需 DevEco 内资源/签名配置 |
+| 工程结构 | 70% | 完整 DevEco 工程可构建 HAP（签名/图标/隐私声明待生产化） |
 
 **接口覆盖率 88%**（OS/DisplayServer/输入/渲染/导出器/音频/子窗口/输入法/手柄/性能稳定全链路）。
 
@@ -135,7 +136,7 @@ macOS 平台对照基线：约 16,229 行（.mm/.h）。
 7. **音频输入链路**：麦克风输入（RecordingStream）与 OHAudio 中断处理待完善。
 8. **鼠标捕获模式**：相对位移增量已实现；系统级鼠标锁（捕获期间光标锁于窗口）依赖系统 API 能力。
 9. **仅 Vulkan**：无 GLES3 路径（2in1 PC 方向合理，与 macOS/Windows 桌面路径一致）。
-10. **导出器模板**：`deveco/` 为最小文件集，生产化模板需在 DevEco Studio 补全签名/图标/隐私声明等。
+10. **签名/图标/隐私声明**：`deveco/` 工程可构建出未签名 HAP；正式安装需 DevEco Studio 配置自动签名（需华为开发者账号），图标/隐私声明等生产化模板待补全。
 
 ## 九、构建与运行
 
@@ -143,11 +144,16 @@ macOS 平台对照基线：约 16,229 行（.mm/.h）。
 # 1. 交叉编译 Godot 引擎（要求 DEVECO_SDK_HOME 或默认 SDK 路径）
 cd godot
 scons platform=ohos target=editor arch=arm64
+# 拷贝引擎库到 DevEco 工程
+cp bin/libgodot.ohos.editor.arm64.so platform/ohos/deveco/entry/libs/arm64-v8a/libgodot.so
 
-# 2. 在 DevEco Studio 打开 platform/ohos/deveco/ 工程
-#    - 将 bin/libgodot.ohos.editor.arm64.so 放入 entry/libs/arm64-v8a/
-#    - 配置 signing（真机）或模拟器（MateBook Pro 26）
-# 3. 运行：hvigorw assembleHap + hdc install
+# 2. 一键构建 HAP（自动探测 DevEco Studio 26.0.0 的 SDK/JRE/hvigor）
+cd platform/ohos/deveco
+./build_hap.sh                # 产物：entry/build/default/outputs/default/entry-default-unsigned.hap
+
+# 3. 签名与部署
+#    - 真机/模拟器安装需先在 DevEco Studio 配置自动签名（Signing Configs）
+#    - 部署：hdc install -r entry-default-unsigned.hap && hdc shell aa start -b <bundleName> -a <abilityName>
 
 # 4. 导出游戏：Godot 编辑器 File > Export，选 HarmonyOS 平台（export 插件）
 ```
