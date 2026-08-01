@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  ohos_bridge.h                                                         */
+/*  audio_driver_ohos.h                                                   */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,39 +30,50 @@
 
 #pragma once
 
-#include "core/object/object.h"
-#include "core/string/ustring.h"
-#include "core/variant/callable.h"
+#include "core/os/mutex.h"
+#include "servers/audio/audio_driver.h"
 
-/* OHOS NAPI 桥接口。
+#include <ohaudio/native_audiorenderer.h>
+
+/* AudioDriverOHOS：基于 OHOS NDK OHAudio 的音频输出驱动。
  *
- * 供平台各子系统（DisplayServer/OS）调用由 main_ohos.cpp 实现的
- * NAPI 跨层能力（剪贴板/文件对话框/窗口操作等）。实现均位于
- * main_ohos.cpp，经 ArkTS 侧注册的 @ohos.pasteboard 等系统能力桥接。
+ * 对应 macOS 的 AudioDriverCoreAudio（AudioQueue/AudioUnit）。
+ * 采用 OHAudio 渲染流（AUDIOSTREAM_TYPE_RENDERER）：
+ *   - 采样率 48000Hz、双声道、F32LE；
+ *   - OHAudio 独立音频线程回调 on_write_data，填充 Godot 混音输出；
+ *   - Godot 混音为 int32 样本，需转换为 float（÷2^31）写入 OHAudio 缓冲。
  *
- * 第 5 轮：剪贴板文本读写（编辑器复制/粘贴必需）+ 系统文件选择器。
+ * 第 6 轮（音频/显示/物理存储完整期）。
  */
+class AudioDriverOHOS : public AudioDriver {
+private:
+	OH_AudioStreamBuilder *builder = nullptr;
+	OH_AudioRenderer *renderer = nullptr;
 
-// 设置剪贴板文本（对应 macOS NSPasteboard setString / @ohos.pasteboard）
-void ohos_clipboard_set_text(const String &p_text);
+	// 配置（init 时固定）
+	int mix_rate = 48000;
+	int channels = 2;
+	int buffer_frames = 0; // OHAudio 每回调帧数
 
-// 读取剪贴板文本（@ohos.pasteboard getPasteData，无内容返回空串）
-String ohos_clipboard_get_text();
+	// 混音中间缓冲（Godot int32 样本，转 float 后写入 OHAudio）
+	Vector<int32_t> mix_buffer;
 
-// 弹出系统文件选择器（@ohos.file.picker DocumentViewPicker）。
-// p_mode 为 DisplayServerEnums::FileDialogMode（打开/保存等）。
-// 选择完成后在引擎线程调用 p_callback（参数为 PackedStringArray 路径列表；
-// 用户取消时为空数组）。立即返回 OK（异步）。
-Error ohos_pick_files(const String &p_title, int p_mode, const Callable &p_callback);
+	// 线程锁：OHAudio 回调线程 vs 引擎主线程
+	Mutex mutex;
 
-// 请求窗口模式切换（全屏/最大化/窗口化）。
-// p_mode 为 DisplayServerEnums::WindowMode；经 ArkTS @ohos.window 应用。
-void ohos_window_set_mode(int p_mode);
+	// OHAudio 回调：请求填充音频数据（运行于 OHAudio 音频线程）
+	static OH_AudioData_Callback_Result on_write_data(OH_AudioRenderer *p_renderer, void *p_user_data, void *p_audio_data, int32_t p_audio_data_size);
 
-// 请求窗口置顶（悬浮窗，第 5 轮：编辑器预览用）
-void ohos_window_set_always_on_top(bool p_enabled);
+public:
+	const char *get_name() const override { return "OHAudio"; }
 
-// 从 HAP rawfile 提取文件到沙盒（第 6 轮：导出的 main.pck）。
-// p_name 为 rawfile 内相对路径；p_dest 为目标沙盒路径。
-// 文件不存在返回 ERR_FILE_NOT_FOUND；资源管理器未初始化返回 ERR_UNAVAILABLE。
-Error ohos_extract_raw_file(const String &p_name, const String &p_dest);
+	Error init() override;
+	void start() override;
+	int get_mix_rate() const override { return mix_rate; }
+	SpeakerMode get_speaker_mode() const override { return SPEAKER_MODE_STEREO; }
+	float get_latency() override;
+
+	void lock() override;
+	void unlock() override;
+	void finish() override;
+};

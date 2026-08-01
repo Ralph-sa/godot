@@ -1,8 +1,8 @@
 ---
-current_round: 5
-completed_rounds: [1, 2, 3, 4, 5]
-total_completion: 40%
-interface_coverage: 55%
+current_round: 6
+completed_rounds: [1, 2, 3, 4, 5, 6]
+total_completion: 48%
+interface_coverage: 65%
 ---
 
 # 轮次进度追踪（round-progress）
@@ -11,13 +11,40 @@ interface_coverage: 55%
 
 ## 当前状态
 
-- **当前轮次**：第 5 轮（导出器完整 + 编辑特性 + 文件对话框，已完成）
-- **已结束轮次**：第 1、2、3、4、5 轮
-- **总完成度**：40%（骨架 + 输入 + 窗口事件 + 渲染 + 导出器/剪贴板/文件对话框）
-- **接口覆盖率**：55%（OS/DisplayServer/输入/渲染驱动/导出器/剪贴板）
+- **当前轮次**：第 6 轮（音频/显示/物理存储完整，已完成）
+- **已结束轮次**：第 1、2、3、4、5、6 轮
+- **总完成度**：48%（骨架 + 输入 + 窗口 + 渲染 + 导出器 + 音频/多屏/存储）
+- **接口覆盖率**：65%（OS/DisplayServer/输入/渲染/导出器/音频驱动）
 - **git 分支**：hm
 
 ## 轮次记录
+
+### 第 6 轮（已完成）
+
+- **管理者 tasklist**：
+  - [x] A 音频：AudioDriverOHOS（OHAudio NDK 渲染流，48000Hz/F32LE/回调混音）
+  - [x] B 显示枚举：多屏（@ohos.display getAllDisplays → updateDisplays JSON → 屏幕数组）
+  - [x] C 物理存储：get_system_dir 沙盒映射（对应 macOS NSSearchPathForDirectoriesInDomains）
+  - [x] E 文件系统：rawfile 读取（initResourceManager + ohos_extract_raw_file → main.pck 提取 + --main-pack 启动）
+  - [x] H 系统集成：NAPI 新增 initResourceManager / updateDisplays（共 12 接口）
+  - [x] J 验证：check_build real 交叉编译通过 + macOS 对比总结 + git 提交
+- **开发者**：全部清单完成。
+  - 音频：AudioDriverOHOS 基于 OHAudio 渲染流（AUDIOSTREAM_TYPE_RENDERER），on_write_data 回调在 OHAudio 音频线程调用 audio_server_process 混音，int32→float 转换写 F32LE 缓冲；注册到 AudioDriverManager（audio/driver/driver 可选 "OHAudio"）。
+  - 显示枚举：ArkTS getAllDisplays 汇总全部屏幕（位置/尺寸/DPI/刷新率）→ godot.updateDisplays(JSON) → DisplayServerOHOS::set_screens，screen_get_size/dpi/refresh 多屏查询。
+  - 物理存储：get_system_dir 全部映射 filesDir（沙盒模型；公共目录经 FilePicker 授权第 8 轮）。
+  - 文件系统：initResourceManager(ArkTS resourceManager) → NativeResourceManager；engine_start 时提取 rawfile/main.pck 到 filesDir；engine_thread_main 构造 --main-pack 参数（导出游戏启动链路）。
+  - 链接：detect.py 追加 libohaudio / -l:librawfile.z.so（OHOS *.z.so 命名）。
+- **挑战者**：
+  - 挑战①：OHOS OHAudio 枚举为 AUDIOSTREAM_* 前缀（非 OH_AUDIO_STREAM_*）→ 已按 SDK 头文件实际枚举修正。
+  - 挑战②：OH_ResourceManager_GetRawFileLength 不存在 → 改用 OH_ResourceManager_GetRawFileSize。
+  - 挑战③：-lrawfile 链接失败（实际 librawfile.z.so）→ 改用 -l:精确文件名。
+- **审查者**：NAPI 导出 12 接口；音频回调跨线程有 Mutex 保护；rawfile 桥与屏幕注入均无损线程模型；rawfile 释放（CloseRawFile/ReleaseNativeResourceManager）成对。遗留：输入混音路径（输入缓冲）、OHAudio 中断处理（第 8 轮）、公共目录持久化授权（第 8 轮）。
+- **测试者**：check_build.py real 交叉编译通过；`libgodot.ohos.editor.arm64.so` 产出成功。音频实际出声需 DevEco 模拟器/真机验证。
+- **macOS 对比**：macOS 平台 17793 行；OHOS 平台约 4300 行（第 6 轮 +~320 行）。
+  - 核心对照：AudioDriverCoreAudio(AudioQueue) → OHAudio 渲染流；NSScreen 列表 → getAllDisplays 回传；NSSearchPathForDirectoriesInDomains → get_system_dir 沙盒映射；NSBundle resource 读取 → rawfile 提取。
+  - 覆盖率估算：OS 85%、DisplayServer 65%（+多屏枚举）、输入 55%、Vulkan 渲染链路 100%、导出器 60%、音频 70%（输出链路完整，输入/中断待完善）。
+- **git 提交**：本轮提交（见 git log）。
+- **下一轮**：第 7 轮 —— 完善期：多窗口/子窗口（FEATURE_SUBWINDOWS 真实化，NAPI 创建原生子窗口）、光标系统（原生光标形状 @ohos 系统光标）、EditorSettings 持久化核对、DevEco 工程补全。
 
 ### 第 5 轮（已完成）
 

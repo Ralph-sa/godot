@@ -37,6 +37,8 @@
 
 #include "core/string/print_string.h"
 #include "core/os/mutex.h"
+#include "core/io/file_access.h"
+#include "core/io/json.h"
 #include "main/main.h"
 
 #include <napi/native_api.h>
@@ -45,6 +47,8 @@
 
 #include <ace/xcomponent/native_interface_xcomponent.h>
 #include <hilog/log.h>
+#include <rawfile/raw_file.h>
+#include <rawfile/raw_file_manager.h>
 
 #define OHOS_LOG_DOMAIN 0xD002D01
 #define OHOS_LOG_TAG "GodotOHOS"
@@ -289,6 +293,102 @@ void ohos_window_set_always_on_top(bool p_enabled) {
 	ohos_window_set_mode(p_enabled ? 1001 : 0);
 }
 
+// ---- 屏幕枚举桥（第 6 轮：@ohos.display getAllDisplays） ----
+// ArkTS 侧在 onAppear 时查询全部屏幕（位置/尺寸/DPI/刷新率）并经
+// godot.updateDisplays(JSON) 回传，C++ 解析后注入 DisplayServerOHOS。
+static napi_value engine_update_displays(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	size_t len = 0;
+	napi_get_value_string_utf8(env, args[0], nullptr, 0, &len);
+	Vector<char> buf;
+	buf.resize(len + 1);
+	napi_get_value_string_utf8(env, args[0], buf.ptrw(), len + 1, &len);
+
+	DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
+	if (!ds) {
+		return nullptr;
+	}
+	// 解析 JSON 数组：[{"x":0,"y":0,"w":1920,"h":1080,"dpi":160,"refresh":60}, ...]
+	Vector<DisplayServerOHOS::OHOS_ScreenInfo> screen_list;
+	Variant json = JSON::parse_string(String::utf8(buf.ptr()));
+	if (json.get_type() == Variant::ARRAY) {
+		Array arr = json;
+		for (int i = 0; i < arr.size(); i++) {
+			if (arr[i].get_type() != Variant::DICTIONARY) {
+				continue;
+			}
+			Dictionary d = arr[i];
+			DisplayServerOHOS::OHOS_ScreenInfo si;
+			si.position = Point2i(static_cast<int>(d["x"]), static_cast<int>(d["y"]));
+			si.size = Size2i(static_cast<int>(d["w"]), static_cast<int>(d["h"]));
+			si.dpi = static_cast<int>(d["dpi"]);
+			si.refresh_rate = static_cast<float>(static_cast<double>(d["refresh"]));
+			screen_list.push_back(si);
+		}
+	}
+	ds->set_screens(screen_list);
+	return nullptr;
+}
+
+// ---- rawfile 资源桥（第 6 轮：HAP 内嵌资源读取） ----// 鸿蒙 HAP 内的 rawfile（如导出的 main.pck）不能直接以文件路径读取，
+// 需经资源管理器（NativeResourceManager）API。ArkTS 侧将
+// getContext(this).resourceManager 传给 NAPI，C++ 初始化后即可读取。
+static NativeResourceManager *g_res_mgr = nullptr;
+static Mutex res_mgr_mutex;
+
+// 初始化资源管理器（ArkTS: godot.initResourceManager(resourceManager) -> void）
+static napi_value engine_init_resource_manager(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	MutexLock lock(res_mgr_mutex);
+	if (g_res_mgr) {
+		OH_ResourceManager_ReleaseNativeResourceManager(g_res_mgr);
+	}
+	// 从 ArkTS resourceManager 对象初始化原生资源管理器
+	g_res_mgr = OH_ResourceManager_InitNativeResourceManager(env, args[0]);
+	return nullptr;
+}
+
+Error ohos_extract_raw_file(const String &p_name, const String &p_dest) {
+	// 从 HAP rawfile 提取文件到沙盒（如 main.pck -> <filesDir>/main.pck）
+	MutexLock lock(res_mgr_mutex);
+	if (!g_res_mgr) {
+		return ERR_UNAVAILABLE;
+	}
+	RawFile *raw = OH_ResourceManager_OpenRawFile(g_res_mgr, p_name.utf8().get_data());
+	if (!raw) {
+		return ERR_FILE_NOT_FOUND;
+	}
+	long len = OH_ResourceManager_GetRawFileSize(raw);
+	Vector<uint8_t> data;
+	data.resize(static_cast<int>(len));
+	if (len > 0) {
+		int got = OH_ResourceManager_ReadRawFile(raw, data.ptrw(), static_cast<size_t>(len));
+		if (got != len) {
+			OH_ResourceManager_CloseRawFile(raw);
+			return ERR_FILE_CORRUPT;
+		}
+	}
+	OH_ResourceManager_CloseRawFile(raw);
+
+	Ref<FileAccess> out = FileAccess::open(p_dest, FileAccess::WRITE);
+	if (out.is_null()) {
+		return ERR_CANT_OPEN;
+	}
+	out->store_buffer(data);
+	out->close();
+	return OK;
+}
+
 // ---- 内部工具：获取 NAPI 字符串参数 ----
 static std::string get_string_param(napi_env env, napi_value value) {
 	size_t len = 0;
@@ -301,12 +401,22 @@ static std::string get_string_param(napi_env env, napi_value value) {
 // ---- 引擎线程入口：启动 + 主循环迭代 ----
 static void engine_thread_main() {
 	// 引擎线程：跑主循环直到停止
-	// 注意：鸿蒙无传统 main(argc, argv)，构造空参数列表（后续轮次从 NAPI 接收启动参数）
-	const char *execpath = "";
-	int argc = 0;
-	char **argv = nullptr;
+	// 鸿蒙无传统 main(argc, argv)：构造参数列表。
+	// 若沙盒内存在 main.pck（从 HAP rawfile 提取），以 --main-pack 加载导出游戏。
+	std::vector<std::string> arg_strs;
+	arg_strs.push_back("godot");
+	String main_pack = String::utf8(sandbox_files_dir.c_str()).path_join("main.pck");
+	if (FileAccess::exists(main_pack)) {
+		arg_strs.push_back("--main-pack");
+		arg_strs.push_back(main_pack.utf8().get_data());
+	}
+	std::vector<char *> argv;
+	for (const std::string &s : arg_strs) {
+		argv.push_back(const_cast<char *>(s.c_str()));
+	}
+	int argc = static_cast<int>(argv.size());
 
-	if (Main::setup(execpath, argc, argv) != OK) {
+	if (Main::setup(argv[0], argc, argv.data()) != OK) {
 		// 启动失败：直接结束
 		engine_running = false;
 		return;
@@ -447,6 +557,13 @@ static napi_value engine_start(napi_env env, napi_callback_info info) {
 		napi_get_value_int32(env, args[1], &height);
 	}
 
+	// 提取 HAP rawfile 中的 main.pck 到沙盒（存在才提取；编辑器运行时可无）
+	String pack_dest = String::utf8(sandbox_files_dir.c_str()).path_join("main.pck");
+	Error extract_err = ohos_extract_raw_file("main.pck", pack_dest);
+	if (extract_err == OK) {
+		print_line("Godot Engine: extracted main.pck from rawfile.");
+	}
+
 	// 启动引擎线程（主循环在子线程迭代，ArkUI 主线程保持响应）
 	if (engine_running) {
 		return nullptr; // 已启动则忽略重复调用
@@ -518,9 +635,11 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "registerFilePicker", nullptr, engine_register_file_picker, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "filePickerResult", nullptr, engine_file_picker_result, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "registerWindowHandler", nullptr, engine_register_window_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "initResourceManager", nullptr, engine_init_resource_manager, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "updateDisplays", nullptr, engine_update_displays, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 10, props);
+	napi_define_properties(env, exports, 12, props);
 	return exports;
 }
 

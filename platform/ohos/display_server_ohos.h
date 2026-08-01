@@ -52,6 +52,16 @@
  * 后续轮次逐步实现窗口控制/鼠标/输入/对话框等完整接口。
  */
 class DisplayServerOHOS : public DisplayServer {
+public:
+	// 屏幕信息结构（对应 macOS NSScreen 列表，多屏枚举用）
+	struct OHOS_ScreenInfo {
+		Point2i position = Point2i(0, 0);
+		Size2i size = Size2i(1920, 1080);
+		int dpi = 160;
+		float refresh_rate = 60.0f;
+	};
+
+private:
 	// 窗口哈希表：window_id -> OHOS_Window（骨架期只含主窗口）
 	HashMap<DisplayServerEnums::WindowID, OHOS_Window *> windows;
 
@@ -75,6 +85,9 @@ class DisplayServerOHOS : public DisplayServer {
 
 	// 屏幕刷新率（由 Index.ets 经 @ohos.display 注入，Hz）
 	float screen_refresh_rate = 60.0f;
+
+	// 屏幕列表（第 6 轮：多屏枚举，由 @ohos.display getAllDisplays 回传）
+	Vector<OHOS_ScreenInfo> screens;
 
 	// 窗口模式（默认窗口化；全屏/最大化经 NAPI 请求 ArkUI 窗口）
 	DisplayServerEnums::WindowMode window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
@@ -195,4 +208,7 @@ public:
 	void set_main_xcomponent(OHOS_XComponent *p_xc) { main_xcomponent = p_xc; }
 	// 注入屏幕刷新率（Index.ets @ohos.display 传入）
 	void set_screen_refresh_rate(float p_rate) { screen_refresh_rate = p_rate; }
+
+	// 更新屏幕列表（第 6 轮：@ohos.display getAllDisplays JSON 解析后注入）
+	void set_screens(const Vector<OHOS_ScreenInfo> &p_screens) { screens = p_screens; }
 };

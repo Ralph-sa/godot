@@ -37,6 +37,7 @@
 #include "core/string/ustring.h"
 #include "display_server_ohos.h"
 #include "main/main.h"
+#include "servers/audio/audio_driver.h"
 
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -75,8 +76,11 @@ void OS_OHOS::initialize_core() {
 }
 
 void OS_OHOS::initialize() {
-	// 第 1 轮骨架：仅初始化核心；后续轮次在此挂接崩溃处理器/音频等
+	// 初始化核心（含 DisplayServer 驱动注册）
 	initialize_core();
+
+	// 注册 OHAudio 音频驱动（AudioDriverManager 管理，main.cpp 按 audio/driver/driver 选择）
+	AudioDriverManager::add_driver(&audio_driver_ohos);
 }
 
 void OS_OHOS::finalize() {
@@ -226,6 +230,14 @@ String OS_OHOS::get_system_ca_certificates() {
 	// 鸿蒙系统 CA 证书目录（与 Android 同构，/system/etc/security/cacerts）。
 	// 沙盒内应用只读系统分区，此处仅返回路径供 TLS 加载。
 	return "/system/etc/security/cacerts";
+}
+
+String OS_OHOS::get_system_dir(SystemDir p_dir, bool p_shared_storage) const {
+	// 系统公共目录（桌面/文档/下载等）：鸿蒙 App 沙盒内不可直接访问系统目录。
+	// 与 macOS NSSearchPathForDirectoriesInDomains 对应，但沙盒模型下
+	// 全部映射到 filesDir；访问真实公共目录需 FilePicker 持久化授权
+	//（第 8 轮完善期接入 @ohos.file.fileAccess）。
+	return sandbox_files_dir;
 }
 
 Error OS_OHOS::get_entropy(uint8_t *r_buffer, int p_bytes) {

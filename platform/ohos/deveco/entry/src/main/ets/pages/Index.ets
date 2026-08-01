@@ -49,6 +49,8 @@ struct Index {
           }
           // Surface 就绪后启动 Godot 引擎
           if (!this.engineStarted) {
+            // 初始化资源管理器（rawfile 读取，如导出的 main.pck）
+            godot.initResourceManager(getContext(this).resourceManager);
             godot.initialize(this.getFilesDir(), this.getCacheDir(),
               this.getSystemLanguage(), this.getModelName(), this.getScreenDensity(), this.getRefreshRate());
             godot.start(this.getScreenWidth(), this.getScreenHeight());
@@ -84,6 +86,8 @@ struct Index {
           godot.registerWindowHandler((mode: number) => {
             this.applyWindowMode(mode);
           });
+          // 屏幕枚举：查询全部屏幕并回传引擎（多屏支持）
+          this.updateDisplays();
         })
         .width('100%')
         .height('100%')
@@ -223,5 +227,29 @@ struct Index {
     } catch (e) {
       // 窗口操作失败：忽略（引擎内窗口状态已记录）
     }
+  }
+
+  // ---- 屏幕枚举（第 6 轮，@ohos.display getAllDisplays） ----
+
+  // 查询全部屏幕（位置/尺寸/DPI/刷新率）并回传引擎
+  private updateDisplays(): void {
+    let displayList: Array<Object> = [];
+    display.getAllDisplays().then((displays: Array<display.Display>) => {
+      for (let i = 0; i < displays.length; i++) {
+        let d: display.Display = displays[i];
+        displayList.push({
+          x: 0,
+          y: 0,
+          w: d.width,
+          h: d.height,
+          dpi: d.densityDPI,
+          refresh: d.refreshRate
+        });
+      }
+    }).catch(() => {
+      // 查询失败：引擎保持单屏默认
+    }).finally(() => {
+      godot.updateDisplays(JSON.stringify(displayList));
+    });
   }
 }

@@ -133,22 +133,35 @@ bool DisplayServerOHOS::has_window(DisplayServerEnums::WindowID p_window) const 
 }
 
 int DisplayServerOHOS::get_screen_count() const {
-	// 骨架期：主屏幕 = 1（多屏支持后续轮次接入 OH_DisplayManager）
+	// 屏幕数量：多屏枚举（第 6 轮经 @ohos.display getAllDisplays 注入），
+	// 未回传前默认 1（主屏）。
+	if (!screens.is_empty()) {
+		return screens.size();
+	}
 	return 1;
 }
 
 int DisplayServerOHOS::get_primary_screen() const {
+	// 主屏幕：始终为 0（鸿蒙主屏即索引 0）
 	return 0;
 }
 
 Point2i DisplayServerOHOS::screen_get_position(int p_screen) const {
-	// 骨架期：主屏幕原点 (0,0)
+	// 屏幕原点：多屏时使用回传坐标（扩展屏偏移）。
+	// 对应 macOS NSScreen.frame.origin。
+	if (!screens.is_empty()) {
+		int idx = CLAMP(p_screen, 0, screens.size() - 1);
+		return screens[idx].position;
+	}
 	return Point2i(0, 0);
 }
 
 Size2i DisplayServerOHOS::screen_get_size(int p_screen) const {
-	// 屏幕尺寸：编辑器运行时以主窗口 XComponent 实际 Surface 尺寸为准
-	// （鸿蒙多屏桌面后续轮次通过 OH_DisplayManager 查询）
+	// 屏幕尺寸：多屏时使用回传尺寸；主屏以 XComponent Surface 实际尺寸为准
+	if (!screens.is_empty()) {
+		int idx = CLAMP(p_screen, 0, screens.size() - 1);
+		return screens[idx].size;
+	}
 	if (main_xcomponent && main_xcomponent->is_surface_ready()) {
 		return main_xcomponent->get_size();
 	}
@@ -158,13 +171,16 @@ Size2i DisplayServerOHOS::screen_get_size(int p_screen) const {
 Rect2i DisplayServerOHOS::screen_get_usable_rect(int p_screen) const {
 	// 可用区域 = 屏幕区域（鸿蒙无任务栏遮挡差异，先简化为全屏）
 	Size2i sz = screen_get_size(p_screen);
-	return Rect2i(0, 0, sz.x, sz.y);
+	Point2i pos = screen_get_position(p_screen);
+	return Rect2i(pos, sz);
 }
 
 int DisplayServerOHOS::screen_get_dpi(int p_screen) const {
-	// DPI：鸿蒙以 vp 为逻辑单位（1vp = px / density）。
-	// density 由 main_ohos.cpp 通过 NAPI（@ohos.display densityDPI）注入，
-	// DPI 估算为 160 * density（Android/鸿蒙 通用约定）。
+	// DPI：多屏时使用回传值；否则按密度估算 160 * density
+	if (!screens.is_empty()) {
+		int idx = CLAMP(p_screen, 0, screens.size() - 1);
+		return screens[idx].dpi;
+	}
 	OS_OHOS *os = OS_OHOS::get_singleton();
 	if (os) {
 		return static_cast<int>(160.0f * os->get_screen_density());
@@ -173,8 +189,11 @@ int DisplayServerOHOS::screen_get_dpi(int p_screen) const {
 }
 
 float DisplayServerOHOS::screen_get_refresh_rate(int p_screen) const {
-	// 刷新率：优先使用 Index.ets 注入的真实值（@ohos.display refreshRate），
-	// 兜底 60Hz。后续可经 OH_DisplayManager 主动查询。
+	// 刷新率：多屏时使用回传值；否则用注入的默认值（兜底 60Hz）
+	if (!screens.is_empty()) {
+		int idx = CLAMP(p_screen, 0, screens.size() - 1);
+		return screens[idx].refresh_rate;
+	}
 	return screen_refresh_rate;
 }
 

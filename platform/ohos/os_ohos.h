@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "audio_driver_ohos.h"
 #include "core/input/input_event.h"
 #include "core/templates/rb_map.h"
 #include "drivers/unix/os_unix.h"
@@ -65,6 +66,9 @@ class OS_OHOS : public OS_Unix {
 
 	// 屏幕密度（1vp = px / density，由 main_ohos.cpp 注入）
 	float screen_density = 1.0f;
+
+	// 音频驱动（OHAudio 渲染流，第 6 轮注册）
+	AudioDriverOHOS audio_driver_ohos;
 
 protected:
 	virtual void initialize_core() override;
@@ -104,6 +108,7 @@ public:
 	virtual Error shell_open(const String &p_uri) override;
 	virtual String get_system_ca_certificates() override;
 	virtual Error get_entropy(uint8_t *r_buffer, int p_bytes) override;
+	virtual String get_system_dir(SystemDir p_dir, bool p_shared_storage = true) const override;
 
 	// ---- 沙盒路径注入（由 NAPI 桥调用） ----
 	void set_sandbox_paths(const String &p_files_dir, const String &p_cache_dir);

@@ -14,7 +14,7 @@ import platform_ohos_builders
 
 Import("env")
 
-# 平台源码文件清单（第 1 轮骨架期）
+# 平台源码文件清单（第 1 轮骨架期；第 6 轮追加音频驱动）
 files = [
     # OS 层：路径 + 生命周期
     "os_ohos.cpp",
@@ -29,6 +29,8 @@ files = [
     "key_mapping_ohos.cpp",
     # 系统集成：崩溃处理器
     "crash_handler_ohos.cpp",
+    # 音频：OHAudio 渲染流驱动（第 6 轮）
+    "audio_driver_ohos.cpp",
 ]
 
 if env.editor_build:
