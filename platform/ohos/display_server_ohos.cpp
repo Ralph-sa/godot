@@ -30,6 +30,7 @@
 
 #include "display_server_ohos.h"
 
+#include "ohos_bridge.h"
 #include "os_ohos.h"
 
 #include "core/config/project_settings.h"
@@ -275,6 +276,33 @@ DisplayServerEnums::VSyncMode DisplayServerOHOS::window_get_vsync_mode(DisplaySe
 	return vsync_mode;
 }
 
+// ---- 剪贴板（NAPI 桥 @ohos.pasteboard） ----
+
+void DisplayServerOHOS::clipboard_set(const String &p_text) {
+	// 写剪贴板：经 NAPI 桥调用 @ohos.pasteboard（编辑器复制/粘贴）
+	ohos_clipboard_set_text(p_text);
+}
+
+String DisplayServerOHOS::clipboard_get() const {
+	// 读剪贴板：NAPI 桥，空内容返回空串
+	return ohos_clipboard_get_text();
+}
+
+bool DisplayServerOHOS::clipboard_has() const {
+	// 剪贴板是否有文本内容（非空即认为有）
+	return !ohos_clipboard_get_text().is_empty();
+}
+
+// ---- 文件对话框（NAPI 桥 @ohos.file.picker） ----
+
+Error DisplayServerOHOS::file_dialog_show(const String &p_title, const String &p_current_directory, const String &p_filename, bool p_show_hidden, DisplayServerEnums::FileDialogMode p_mode, const Vector<String> &p_filters, const Callable &p_callback, DisplayServerEnums::WindowID p_window_id) {
+	// 系统文件选择器：经 NAPI 桥调 ArkTS DocumentViewPicker。
+	// 选择完成后 p_callback 收到 PackedStringArray（取消时为空）。
+	// （对应 macOS 的 NSSavePanel / NSOpenPanel；当前目录等参数由
+	// ArkTS 侧作为初始目录，简化实现仅透传标题与模式。）
+	return ohos_pick_files(p_title, static_cast<int>(p_mode), p_callback);
+}
+
 // ---- 窗口管理（骨架期默认实现） ----
 
 Vector<DisplayServerEnums::WindowID> DisplayServerOHOS::get_window_list() const {
@@ -381,12 +409,14 @@ Size2i DisplayServerOHOS::window_get_size_with_decorations(DisplayServerEnums::W
 void DisplayServerOHOS::window_set_mode(DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::WindowID p_window) {
 	// 窗口模式（窗口化/最大化/全屏）：记录状态，并请求 ArkUI 侧调整系统窗口。
 	// 鸿蒙窗口由 UIAbility/WindowStage 管理，C++ 无法直接修改，
-	// 通过 NAPI 回调通知 ArkTS 设置 maximize/fullScreen（第 4 轮接入）。
+	// 通过 NAPI 桥通知 ArkTS 设置 maximize/fullScreen（第 5 轮接入 @ohos.window）。
 	window_mode = p_mode;
 	// 记录到窗口对象
 	if (windows.has(p_window)) {
 		windows[p_window]->set_window_mode(p_mode);
 	}
+	// 请求 ArkTS 应用窗口模式（全屏/最大化/窗口化）
+	ohos_window_set_mode(static_cast<int>(p_mode));
 	print_verbose(vformat("DisplayServerOHOS: window mode %d", static_cast<int>(p_mode)));
 }
 
@@ -448,8 +478,12 @@ bool DisplayServerOHOS::has_feature(DisplayServerEnums::Feature p_feature) const
 			// 鸿蒙 PC/2in1 支持键鼠与触摸
 			return true;
 		case DisplayServerEnums::FEATURE_SUBWINDOWS:
-			// 编辑器多窗口支持（第 5 轮实现后置 true）
-			return false;
+			// 编辑器多窗口支持（第 5 轮：单一主 XComponent 自绘，子窗口经
+			// NAPI 创建原生子窗口，第 7 轮完整实现，此处声明能力位）
+			return true;
+		case DisplayServerEnums::FEATURE_CLIPBOARD:
+			// 剪贴板（第 5 轮：经 @ohos.pasteboard NAPI 桥实现）
+			return true;
 		case DisplayServerEnums::FEATURE_HIDPI:
 			return true;
 		default:

@@ -110,6 +110,14 @@ public:
 	virtual void window_set_vsync_mode(DisplayServerEnums::VSyncMode p_vsync_mode, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;
 	virtual DisplayServerEnums::VSyncMode window_get_vsync_mode(DisplayServerEnums::WindowID p_window) const override;
 
+	// ---- 剪贴板（第 5 轮：经 NAPI 桥 @ohos.pasteboard） ----
+	virtual void clipboard_set(const String &p_text) override;
+	virtual String clipboard_get() const override;
+	virtual bool clipboard_has() const override;
+
+	// ---- 文件对话框（第 5 轮：经 NAPI 桥 @ohos.file.picker） ----
+	virtual Error file_dialog_show(const String &p_title, const String &p_current_directory, const String &p_filename, bool p_show_hidden, DisplayServerEnums::FileDialogMode p_mode, const Vector<String> &p_filters, const Callable &p_callback, DisplayServerEnums::WindowID p_window_id = DisplayServerEnums::MAIN_WINDOW_ID) override;
+
 	// ---- 窗口（骨架：主窗口尺寸/标题） ----
 	virtual Size2i window_get_size(DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) const override;
 	virtual void window_set_title(const String &p_title, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;

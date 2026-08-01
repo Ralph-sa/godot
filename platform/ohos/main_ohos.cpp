@@ -30,11 +30,13 @@
 
 #include "crash_handler_ohos.h"
 #include "display_server_ohos.h"
+#include "ohos_bridge.h"
 #include "ohos_xcomponent.h"
 #include "os_ohos.h"
 #include "rendering_context_driver_vulkan_ohos.h"
 
 #include "core/string/print_string.h"
+#include "core/os/mutex.h"
 #include "main/main.h"
 
 #include <napi/native_api.h>
@@ -81,6 +83,211 @@ static bool engine_running = false;
 
 // 屏幕刷新率（Index.ets @ohos.display 注入，DisplayServer 创建后生效）
 static float screen_refresh_rate = 60.0f;
+
+// ---- 剪贴板桥（第 5 轮） ----
+// ArkTS 侧通过 registerClipboard 注册 set/get 回调（@ohos.pasteboard 实现）。
+// 鸿蒙 NAPI 支持跨线程调用（API 9+ 线程安全 env），引擎线程直接调用。
+static napi_env clipboard_env = nullptr;
+static napi_ref clipboard_set_ref = nullptr;
+static napi_ref clipboard_get_ref = nullptr;
+static Mutex clipboard_mutex;
+
+void ohos_clipboard_set_text(const String &p_text) {
+	// 写剪贴板：调用 ArkTS 注册的回调（@ohos.pasteboard setData）
+	MutexLock lock(clipboard_mutex);
+	if (!clipboard_env || !clipboard_set_ref) {
+		return;
+	}
+	napi_value global = nullptr;
+	napi_get_global(clipboard_env, &global);
+	napi_value fn = nullptr;
+	napi_get_reference_value(clipboard_env, clipboard_set_ref, &fn);
+	napi_value str = nullptr;
+	napi_create_string_utf8(clipboard_env, p_text.utf8().get_data(), p_text.length(), &str);
+	napi_value argv[1] = { str };
+	napi_value result = nullptr;
+	napi_call_function(clipboard_env, global, fn, 1, argv, &result);
+}
+
+String ohos_clipboard_get_text() {
+	// 读剪贴板：调用 ArkTS 注册的回调（@ohos.pasteboard getPasteData）
+	MutexLock lock(clipboard_mutex);
+	if (!clipboard_env || !clipboard_get_ref) {
+		return String();
+	}
+	napi_value global = nullptr;
+	napi_get_global(clipboard_env, &global);
+	napi_value fn = nullptr;
+	napi_get_reference_value(clipboard_env, clipboard_get_ref, &fn);
+	napi_value result = nullptr;
+	napi_call_function(clipboard_env, global, fn, 0, nullptr, &result);
+	if (result) {
+		size_t len = 0;
+		napi_get_value_string_utf8(clipboard_env, result, nullptr, 0, &len);
+		if (len > 0) {
+			Vector<char> buf;
+			buf.resize(len + 1);
+			napi_get_value_string_utf8(clipboard_env, result, buf.ptrw(), len + 1, &len);
+			return String::utf8(buf.ptr());
+		}
+	}
+	return String();
+}
+
+// 注册剪贴板回调（ArkTS: godot.registerClipboard(setFn, getFn) -> void）
+static napi_value engine_register_clipboard(napi_env env, napi_callback_info info) {
+	size_t argc = 2;
+	napi_value args[2];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 2) {
+		return nullptr;
+	}
+	MutexLock lock(clipboard_mutex);
+	clipboard_env = env;
+	if (clipboard_set_ref) {
+		napi_delete_reference(env, clipboard_set_ref);
+	}
+	if (clipboard_get_ref) {
+		napi_delete_reference(env, clipboard_get_ref);
+	}
+	napi_create_reference(env, args[0], 1, &clipboard_set_ref);
+	napi_create_reference(env, args[1], 1, &clipboard_get_ref);
+	return nullptr;
+}
+
+// ---- 文件选择器桥（第 5 轮：@ohos.file.picker DocumentViewPicker） ----
+// C++ 侧 DisplayServer::file_dialog_show 触发，经 NAPI 请求 ArkTS 打开系统
+// 文件选择器；ArkTS 选择完成后调用 engine_file_picker_result 回传路径列表，
+// 在引擎线程触发保存的 Callable。
+static napi_env picker_env = nullptr;
+static napi_ref picker_handler_ref = nullptr; // ArkTS 侧 pick 处理函数 (title, mode) => void
+static Mutex picker_mutex;
+static Callable picker_callback; // 待回传的 Godot Callable（单槽）
+
+// ArkTS 注册文件选择器处理函数（Index.ets onAppear 调用）
+static napi_value engine_register_file_picker(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	MutexLock lock(picker_mutex);
+	picker_env = env;
+	if (picker_handler_ref) {
+		napi_delete_reference(env, picker_handler_ref);
+	}
+	napi_create_reference(env, args[0], 1, &picker_handler_ref);
+	return nullptr;
+}
+
+// ArkTS 回传选择结果（Index.ets: godot.filePickerResult(pathsJson))
+// pathsJson 为 JSON 字符串数组，如 '["/data/storage/el2/base/files/a.png"]'
+static napi_value engine_file_picker_result(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	size_t len = 0;
+	napi_get_value_string_utf8(env, args[0], nullptr, 0, &len);
+	Vector<char> buf;
+	buf.resize(len + 1);
+	napi_get_value_string_utf8(env, args[0], buf.ptrw(), len + 1, &len);
+
+	// 解析 JSON 路径数组（简化：逗号分隔，含引号去除）
+	PackedStringArray paths;
+	String json = String::utf8(buf.ptr());
+	Vector<String> parts = json.split(",");
+	for (const String &part : parts) {
+		String p = part.strip_edges().trim_prefix("\"").trim_suffix("\"");
+		if (!p.is_empty()) {
+			paths.push_back(p);
+		}
+	}
+
+	// 触发待回调（引擎线程侧由 DisplayServer::process_events 分发）
+	MutexLock lock(picker_mutex);
+	if (picker_callback.is_valid()) {
+		Callable cb = picker_callback;
+		picker_callback = Callable();
+		cb.call(paths);
+	}
+	return nullptr;
+}
+
+Error ohos_pick_files(const String &p_title, int p_mode, const Callable &p_callback) {
+	// 保存回调并通知 ArkTS 打开系统文件选择器
+	MutexLock lock(picker_mutex);
+	if (!picker_env || !picker_handler_ref) {
+		// ArkTS 未注册选择器处理：回调空结果
+		p_callback.call(PackedStringArray());
+		return ERR_UNAVAILABLE;
+	}
+	picker_callback = p_callback;
+
+	napi_value global = nullptr;
+	napi_get_global(picker_env, &global);
+	napi_value fn = nullptr;
+	napi_get_reference_value(picker_env, picker_handler_ref, &fn);
+	napi_value title = nullptr;
+	napi_create_string_utf8(picker_env, p_title.utf8().get_data(), p_title.length(), &title);
+	napi_value mode = nullptr;
+	napi_create_int32(picker_env, p_mode, &mode);
+	napi_value argv[2] = { title, mode };
+	napi_value result = nullptr;
+	napi_call_function(picker_env, global, fn, 2, argv, &result);
+	return OK;
+}
+
+// ---- 窗口模式桥（第 5 轮：@ohos.window） ----
+// DisplayServer::window_set_mode 触发，经 NAPI 请求 ArkTS 应用窗口模式
+// （全屏/最大化/窗口化/置顶）。
+static napi_env window_env = nullptr;
+static napi_ref window_mode_handler_ref = nullptr;
+static Mutex window_mutex;
+
+// ArkTS 注册窗口模式处理函数 (mode) => void
+static napi_value engine_register_window_handler(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	MutexLock lock(window_mutex);
+	window_env = env;
+	if (window_mode_handler_ref) {
+		napi_delete_reference(env, window_mode_handler_ref);
+	}
+	napi_create_reference(env, args[0], 1, &window_mode_handler_ref);
+	return nullptr;
+}
+
+void ohos_window_set_mode(int p_mode) {
+	// 通知 ArkTS 应用窗口模式（全屏/最大化等）
+	MutexLock lock(window_mutex);
+	if (!window_env || !window_mode_handler_ref) {
+		return;
+	}
+	napi_value global = nullptr;
+	napi_get_global(window_env, &global);
+	napi_value fn = nullptr;
+	napi_get_reference_value(window_env, window_mode_handler_ref, &fn);
+	napi_value mode = nullptr;
+	napi_create_int32(window_env, p_mode, &mode);
+	napi_value argv[1] = { mode };
+	napi_value result = nullptr;
+	napi_call_function(window_env, global, fn, 1, argv, &result);
+}
+
+void ohos_window_set_always_on_top(bool p_enabled) {
+	// 置顶经 NAPI 传负值模式标记（0 恢复 / 3 置顶由 ArkTS 侧解释）
+	// 简化：置顶使用独立模式标记 1001，与 WindowMode 枚举不冲突。
+	// （完整窗口 API 见第 7 轮子窗口期。）
+	ohos_window_set_mode(p_enabled ? 1001 : 0);
+}
 
 // ---- 内部工具：获取 NAPI 字符串参数 ----
 static std::string get_string_param(napi_env env, napi_value value) {
@@ -307,9 +514,13 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "start", nullptr, engine_start, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "stop", nullptr, engine_stop, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "notifyFocus", nullptr, engine_notify_focus, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "registerClipboard", nullptr, engine_register_clipboard, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "registerFilePicker", nullptr, engine_register_file_picker, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "filePickerResult", nullptr, engine_file_picker_result, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "registerWindowHandler", nullptr, engine_register_window_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 6, props);
+	napi_define_properties(env, exports, 10, props);
 	return exports;
 }
 

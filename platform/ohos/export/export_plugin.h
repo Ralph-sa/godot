@@ -63,8 +63,16 @@ public:
 	virtual bool has_valid_project_configuration(const Ref<EditorExportPreset> &p_preset, String &r_error) const override;
 
 	virtual List<String> get_binary_extensions(const Ref<EditorExportPreset> &p_preset) const override;
-	// 骨架期：导出流程留待完善期，返回 ERR_UNAVAILABLE
 	virtual Error export_project(const Ref<EditorExportPreset> &p_preset, bool p_debug, const String &p_path, BitField<EditorExportPlatform::DebugFlags> p_flags = 0, bool p_notify = true) override;
 
 	EditorExportPlatformOHOS();
+
+private:
+	// ---- 内部辅助（第 5 轮：导出流程） ----
+	// 定位 DevEco 模板工程路径（编辑器设置优先，回退内置目录）
+	String _get_templates_path() const;
+	// 递归拷贝目录（模板 -> 输出工程）
+	Error _copy_dir_recursive(const String &p_from, const String &p_to);
+	// 改写 DevEco 工程 app.json5（bundleName/版本）
+	void _rewrite_app_config(const String &p_project, const Ref<EditorExportPreset> &p_preset);
 };

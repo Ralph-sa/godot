@@ -1,8 +1,8 @@
 ---
-current_round: 4
-completed_rounds: [1, 2, 3, 4]
-total_completion: 32%
-interface_coverage: 45%
+current_round: 5
+completed_rounds: [1, 2, 3, 4, 5]
+total_completion: 40%
+interface_coverage: 55%
 ---
 
 # 轮次进度追踪（round-progress）
@@ -11,13 +11,42 @@ interface_coverage: 45%
 
 ## 当前状态
 
-- **当前轮次**：第 4 轮（渲染完整 + DevEco 联调准备期，已完成）
-- **已结束轮次**：第 1、2、3、4 轮
-- **总完成度**：32%（骨架 + 输入 + 窗口事件 + 渲染链路确认）
-- **接口覆盖率**：45%（OS/DisplayServer/输入/渲染驱动核心接口）
+- **当前轮次**：第 5 轮（导出器完整 + 编辑特性 + 文件对话框，已完成）
+- **已结束轮次**：第 1、2、3、4、5 轮
+- **总完成度**：40%（骨架 + 输入 + 窗口事件 + 渲染 + 导出器/剪贴板/文件对话框）
+- **接口覆盖率**：55%（OS/DisplayServer/输入/渲染驱动/导出器/剪贴板）
 - **git 分支**：hm
 
 ## 轮次记录
+
+### 第 5 轮（已完成）
+
+- **管理者 tasklist**：
+  - [x] E 导出器完整：get_export_options 扩展（app_name/arch/orientation/include_pck）+ export_project 全流程（模板拷贝 + pck 生成 + app.json5 改写）
+  - [x] D DisplayServer：剪贴板（clipboard_set/get/has → @ohos.pasteboard）
+  - [x] D DisplayServer：文件对话框（file_dialog_show → @ohos.file.picker DocumentViewPicker）
+  - [x] D DisplayServer：窗口模式 NAPI（window_set_mode → @ohos.window maximize/fullScreen）
+  - [x] F 编辑器特性：FEATURE_SUBWINDOWS/FEATURE_CLIPBOARD 置 true
+  - [x] H 系统集成：main_ohos.cpp 新增 registerClipboard/registerFilePicker/filePickerResult/registerWindowHandler 4 个 NAPI
+  - [x] I 导出器：Index.ets 接入 pasteboard/picker/window import + 回调注册 + applyWindowMode
+  - [x] J 验证：check_build real 交叉编译通过 + macOS 对比总结 + git 提交
+- **开发者**：全部清单完成。
+  - 剪贴板链路：DisplayServer::clipboard_set → ohos_clipboard_set_text（main_ohos.cpp 桥，跨线程 NAPI）→ ArkTS @ohos.pasteboard；读取双向对应。
+  - 文件对话框：DisplayServer::file_dialog_show → ohos_pick_files（保存 Callable + NAPI 通知 ArkTS）→ DocumentViewPicker.select → godot.filePickerResult(JSON) → 触发 Callable(PackedStringArray)。取消返回空数组。
+  - 窗口模式：DisplayServer::window_set_mode → ohos_window_set_mode → ArkTS registerWindowHandler → @ohos.window maximize/setWindowLayoutFullScreen/setWindowTopMost（置顶标记 1001）。
+  - 导出器：export_project 三步走（递归拷贝模板工程 → save_pack 生成 main.pck 入 rawfile → 改写 app.json5 bundleName/版本）。移除骨架期虚构的 notify_external_preset 调用。
+  - 编辑器特性：FEATURE_SUBWINDOWS 与 FEATURE_CLIPBOARD 置 true（子窗口完整实现第 7 轮）。
+- **挑战者**：
+  - 挑战①：CharString 无 resize/parse_utf8（Godot 4.8 API）→ 改用 Vector<char> + String::utf8。
+  - 挑战②：EditorExport 无 notify_external_preset 方法 → 移除，导出完成通知由编辑器管理器统一处理。
+  - 挑战③：@ohos.window getLastWindow 返回 Promise → ArkTS 侧改 async/await。
+- **审查者**：NAPI 导出 10 接口（initialize/setXComponent/start/stop/notifyFocus/registerClipboard/registerFilePicker/filePickerResult/registerWindowHandler/dispose），ArkTS 生命周期完整；桥接口（ohos_bridge.h）跨线程调用均有 Mutex 保护；未破坏线程模型。遗留：文件对话框初始目录/过滤器透传（第 8 轮完善）、子窗口真实创建（第 7 轮）。
+- **测试者**：check_build.py real 交叉编译通过；`libgodot.ohos.editor.arm64.so` 产出成功（~7s）。ArkTS 侧编译需 DevEco 完整工程（当前 deveco 目录为最小文件集）。
+- **macOS 对比**：macOS 平台 17793 行；OHOS 平台约 3980 行（第 5 轮 +~280 行）。
+  - 核心对照：NSPasteboard clipboard_set/get → @ohos.pasteboard 桥；NSOpenPanel/NSSavePanel file_dialog_show → DocumentViewPicker；NSWindow setCollectionBehavior/windowDidBecomeMain → @ohos.window + notifyFocus。
+  - 覆盖率估算：OS 82%、DisplayServer 60%（+剪贴板/文件对话框/窗口模式 NAPI）、输入 55%、Vulkan 渲染链路 100%、导出器 60%（模板拷贝 + pck + 配置改写）。
+- **git 提交**：本轮提交（见 git log）。
+- **下一轮**：第 6 轮 —— 音频（AudioDriverOHOS @ohos.multimedia）、显示枚举、物理存储（get_data_dir 沙盒映射）、文件系统（FileAccessOHOS rawfile）、EditorSettings 持久化。
 
 ### 第 4 轮（已完成）
 
