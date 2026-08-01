@@ -167,7 +167,11 @@ String OS_OHOS::get_executable_path() const {
 }
 
 String OS_OHOS::get_locale() const {
-	// 骨架期返回系统语言环境变量；完整实现后续走 NAPI 获取系统 locale
+	// 优先返回 NAPI 注入的系统语言（@ohos.i18n），如 "zh-CN"/"en-US"；
+	// 未注入时回退环境变量 LANG
+	if (!system_locale.is_empty()) {
+		return system_locale;
+	}
 	const char *lang = getenv("LANG");
 	if (lang) {
 		return String::utf8(lang);
@@ -191,7 +195,19 @@ String OS_OHOS::get_processor_name() const {
 }
 
 String OS_OHOS::get_model_name() const {
-	// 设备型号：骨架期返回 arm64；完整实现后续走 NAPI 获取设备信息
+	// 优先返回 NAPI 注入的设备型号（@ohos.deviceInfo productModel）
+	if (!model_name.is_empty()) {
+		return model_name;
+	}
+	// 兜底：从 /proc/device-tree/model 读取（Linux 系设备树）
+	Ref<FileAccess> f = FileAccess::open("/proc/device-tree/model", FileAccess::READ);
+	if (f.is_valid()) {
+		String s = f->get_as_text();
+		s = s.strip_edges();
+		if (!s.is_empty()) {
+			return s;
+		}
+	}
 	return "HarmonyOS Device";
 }
 

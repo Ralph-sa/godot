@@ -61,7 +61,15 @@ void DisplayServerOHOS::register_ohos_driver() {
 	register_create_function("ohos", create_func, get_rendering_drivers_func);
 }
 
+// 静态单例指针（DisplayServer 非 Object，无法 cast_to）
+static DisplayServerOHOS *ohos_ds_singleton = nullptr;
+
+DisplayServerOHOS *DisplayServerOHOS::get_singleton_ohos() {
+	return ohos_ds_singleton;
+}
+
 DisplayServerOHOS::DisplayServerOHOS(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, const Vector2i &p_size) {
+	ohos_ds_singleton = this;
 	rendering_driver = p_rendering_driver;
 	window_size = p_size;
 
@@ -75,6 +83,9 @@ DisplayServerOHOS::DisplayServerOHOS(const String &p_rendering_driver, DisplaySe
 }
 
 DisplayServerOHOS::~DisplayServerOHOS() {
+	if (ohos_ds_singleton == this) {
+		ohos_ds_singleton = nullptr;
+	}
 	// 释放窗口对象
 	for (const KeyValue<DisplayServerEnums::WindowID, OHOS_Window *> &E : windows) {
 		memdelete(E.value);
@@ -83,7 +94,10 @@ DisplayServerOHOS::~DisplayServerOHOS() {
 }
 
 Size2i DisplayServerOHOS::window_get_size(DisplayServerEnums::WindowID p_window) const {
-	// 骨架期：返回记录的主窗口尺寸（后续从 XComponent 实际尺寸读取）
+	// 窗口尺寸：优先返回 XComponent 实际 Surface 尺寸（窗口缩放后保持同步）
+	if (p_window == DisplayServerEnums::MAIN_WINDOW_ID && main_xcomponent && main_xcomponent->is_surface_ready()) {
+		return main_xcomponent->get_size();
+	}
 	return window_size;
 }
 
@@ -102,7 +116,10 @@ void DisplayServerOHOS::window_set_size(const Size2i p_size, DisplayServerEnums:
 	ERR_FAIL_COND_MSG(!windows.has(p_window), "Invalid window ID.");
 	window_size = p_size;
 	windows[p_window]->resize(p_size);
-	// 通知渲染驱动 swapchain 重建（渲染驱动骨架期由 main_ohos.cpp 处理）
+	// 通知渲染驱动 swapchain 重建：XComponent 侧由 ArkUI 布局自动触发
+	// SurfaceChanged 回调，引擎侧在 on_surface_changed 中同步尺寸；
+	// 若 p_size 与当前 XComponent 尺寸不一致（程序化设置），
+	// 第 4 轮通过 NAPI 桥请求 ArkUI 调整 XComponent 布局。
 }
 
 bool DisplayServerOHOS::window_is_visible(DisplayServerEnums::WindowID p_window) const {
@@ -129,28 +146,86 @@ Point2i DisplayServerOHOS::screen_get_position(int p_screen) const {
 }
 
 Size2i DisplayServerOHOS::screen_get_size(int p_screen) const {
-	// 骨架期：屏幕尺寸 = 主窗口尺寸
+	// 屏幕尺寸：编辑器运行时以主窗口 XComponent 实际 Surface 尺寸为准
+	// （鸿蒙多屏桌面后续轮次通过 OH_DisplayManager 查询）
+	if (main_xcomponent && main_xcomponent->is_surface_ready()) {
+		return main_xcomponent->get_size();
+	}
 	return window_size;
 }
 
 Rect2i DisplayServerOHOS::screen_get_usable_rect(int p_screen) const {
-	// 骨架期：可用区域 = 屏幕区域
-	return Rect2i(0, 0, window_size.x, window_size.y);
+	// 可用区域 = 屏幕区域（鸿蒙无任务栏遮挡差异，先简化为全屏）
+	Size2i sz = screen_get_size(p_screen);
+	return Rect2i(0, 0, sz.x, sz.y);
 }
 
 int DisplayServerOHOS::screen_get_dpi(int p_screen) const {
-	// 骨架期：默认 DPI 96（完整实现后续通过系统参数获取）
-	return 96;
+	// DPI：鸿蒙以 vp 为逻辑单位（1vp = px / density）。
+	// density 由 main_ohos.cpp 通过 NAPI（@ohos.display densityDPI）注入，
+	// DPI 估算为 160 * density（Android/鸿蒙 通用约定）。
+	OS_OHOS *os = OS_OHOS::get_singleton();
+	if (os) {
+		return static_cast<int>(160.0f * os->get_screen_density());
+	}
+	return 160;
 }
 
 float DisplayServerOHOS::screen_get_refresh_rate(int p_screen) const {
-	// 骨架期：默认 60Hz（完整实现后续通过 OH_DisplayManager 获取）
+	// 刷新率：MateBook Pro 常见 60Hz/120Hz。完整实现第 4 轮通过
+	// OH_DisplayManager 查询（OH_DisplayManager_GetScreenSupportedVsyncCount）。
 	return 60.0;
 }
 
 void DisplayServerOHOS::process_events() {
-	// 骨架期：输入事件队列处理留待第 4 轮（输入事件分发）实现
-	// 引擎主循环通过 Main::iteration 间接调用本方法
+	// 输入事件分发：从 XComponent 输入队列取事件，投递到主窗口的
+	// input_event_callback（引擎在 Main::iteration 中调用本方法）。
+	// 对应 macOS 的 NSEvent 循环派发；触摸/鼠标/键盘事件在 ArkUI 主线程
+	// 回调中入队（见 ohos_xcomponent.cpp），此处由引擎线程消费。
+	if (main_xcomponent && windows.has(DisplayServerEnums::MAIN_WINDOW_ID)) {
+		Callable input_cb = windows[DisplayServerEnums::MAIN_WINDOW_ID]->get_input_event_callback();
+		main_xcomponent->poll_events(input_cb);
+	}
+}
+
+// ---- 光标与鼠标 ----
+
+void DisplayServerOHOS::cursor_set_shape(DisplayServerEnums::CursorShape p_shape) {
+	// 记录光标形状。原生光标（IBeam/手型等）在鸿蒙 XComponent 上由
+	// ArkUI 侧 SystemCursor 实现，第 8 轮通过 NAPI 同步（先记录状态）。
+	cursor_shape = p_shape;
+}
+
+DisplayServerEnums::CursorShape DisplayServerOHOS::cursor_get_shape() const {
+	return cursor_shape;
+}
+
+void DisplayServerOHOS::cursor_set_custom_image(const Ref<Resource> &p_cursor, DisplayServerEnums::CursorShape p_shape, const Vector2 &p_hotspot) {
+	// 记录自定义光标（编辑器拖拽/吸管等）。XComponent 不直接支持自定义
+	// 光标，第 8 轮通过 ArkUI 层绘制或隐藏系统光标实现。
+	custom_cursor = p_cursor;
+	custom_cursor_shape = p_shape;
+	custom_cursor_hotspot = p_hotspot;
+}
+
+Point2i DisplayServerOHOS::mouse_get_position() const {
+	// 返回最近一次鼠标事件位置（由 XComponent 鼠标回调更新）
+	if (main_xcomponent) {
+		return main_xcomponent->get_last_mouse_position();
+	}
+	return Point2i();
+}
+
+// ---- 垂直同步 ----
+
+void DisplayServerOHOS::window_set_vsync_mode(DisplayServerEnums::VSyncMode p_vsync_mode, DisplayServerEnums::WindowID p_window) {
+	// 记录 VSync 模式。实际控制 Vulkan present mode 在渲染驱动创建时
+	// 读取该值（rendering_context_driver_vulkan_ohos.cpp 第 4 轮接入）。
+	vsync_mode = p_vsync_mode;
+}
+
+DisplayServerEnums::VSyncMode DisplayServerOHOS::window_get_vsync_mode(DisplayServerEnums::WindowID p_window) const {
+	return vsync_mode;
 }
 
 // ---- 窗口管理（骨架期默认实现） ----

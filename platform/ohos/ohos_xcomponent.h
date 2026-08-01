@@ -30,23 +30,34 @@
 
 #pragma once
 
+#include "core/input/input_event.h"
 #include "core/math/rect2.h"
+#include "core/math/vector2.h"
 #include "core/math/vector2i.h"
+#include "core/os/mutex.h"
+#include "core/templates/hash_map.h"
+#include "core/templates/vector.h"
 
 /* OHOS_XComponent：鸿蒙 XComponent(SURFACE) 原生宿主。
  *
  * 对应 macOS 平台中的 NSView/CALayer 角色（godot_content_view）：
  * macOS 用 NSView 承接绘制与事件，OHOS 用 XComponent 承接 Vulkan Surface
- * 与触摸/笔事件（OnDispatchTouchEvent）。
+ * 与触摸/鼠标/键盘事件（DispatchTouchEvent / MouseEvent / KeyEvent）。
  *
  * API 26 关键语义：XComponent Surface 延迟到组件首次可见才创建，因此
  * SurfaceCreated/SurfaceDestroyed 回调需与引擎渲染启停解耦（见移植方案 1.1）。
- * 第 1 轮（骨架期）：定义生命周期与触摸回调接口，具体实现第 3 轮补全。
+ *
+ * 第 2 轮（功能深化）：实现触摸/鼠标/键盘事件回调注册与 InputEvent 队列，
+ * 由 DisplayServer::process_events 消费并派发（对应 macOS 的 NSEvent 处理）。
+ *
+ * 线程模型：事件回调运行在 ArkUI 主线程，引擎线程在 process_events 消费。
+ * 因此事件先入队列（互斥锁保护），由引擎线程拉取，避免跨线程直接调用。
  */
 
 typedef struct OH_ArkUI_XComponent OH_ArkUI_XComponent;
 typedef struct OH_NativeXComponent OH_NativeXComponent;
 typedef struct NativeWindow OHNativeWindow;
+typedef struct OH_NativeXComponent_KeyEvent OH_NativeXComponent_KeyEvent;
 
 class OHOS_XComponent {
 	// XComponent 的 ArkUI 句柄（从 NAPI 回调获取）
@@ -64,8 +75,30 @@ class OHOS_XComponent {
 	// Surface 是否已就绪（决定渲染是否可启动）
 	bool surface_ready = false;
 
+	// ---- 输入事件（第 2 轮） ----
+	// 输入事件队列：ArkUI 主线程投递，引擎线程 process_events 消费
+	Vector<Ref<InputEvent>> input_events;
+	Mutex input_events_mutex;
+
+	// 活动触摸点状态（id -> 位置），用于生成相对位移
+	HashMap<int32_t, Vector2> touch_state;
+
+	// 最后一次鼠标位置（编辑器光标查询用）
+	Point2i last_mouse_position;
+
+	// ---- C 回调所需静态实例（编辑器主窗口唯一 XComponent） ----
+	static OHOS_XComponent *s_instance;
+
+	// ---- C 风格回调包装（OH_NativeXComponent 回调签名） ----
+	static void surface_created_cb(OH_NativeXComponent *component, void *window);
+	static void surface_changed_cb(OH_NativeXComponent *component, void *window);
+	static void surface_destroyed_cb(OH_NativeXComponent *component, void *window);
+	static void dispatch_touch_event_cb(OH_NativeXComponent *component, void *window);
+	static void dispatch_mouse_event_cb(OH_NativeXComponent *component, void *window);
+	static void dispatch_key_event_cb(OH_NativeXComponent *component, void *window);
+
 public:
-	OHOS_XComponent() = default;
+	OHOS_XComponent();
 	~OHOS_XComponent();
 
 	// ---- 生命周期回调（由 NAPI 桥注册后触发） ----
@@ -73,11 +106,34 @@ public:
 	void on_surface_changed(int p_width, int p_height);
 	void on_surface_destroyed();
 
-	// ---- 触摸/笔事件分发（OnDispatchTouchEvent） ----
-	// 骨架期仅声明，第 4 轮实现具体 InputEventScreenTouch/Drag 注入
+	// ---- 事件注册（main_ohos.cpp 调用，绑定 surface/touch/mouse/key 回调） ----
+	// 返回 0 成功；非 0 为 ArkUI 注册错误码
+	int register_callbacks();
+
+	// 设置 OH_NativeXComponent 句柄（从 ArkTS XComponent onLoad 上下文获取）
+	void set_xcomponent(OH_NativeXComponent *p_xc) { native_xcomponent = p_xc; }
+
+	// ---- 输入事件处理（由静态回调调用，运行在 ArkUI 主线程） ----
+	void handle_touch_event(OH_NativeXComponent *p_component, void *p_window);
+	void handle_mouse_event(OH_NativeXComponent *p_component, void *p_window);
+	void handle_key_event(OH_NativeXComponent *p_component, void *p_window);
+
+	// ---- 事件消费（DisplayServer::process_events 调用，运行在引擎线程） ----
+	// 从队列取走全部事件并投递到窗口的 input_event_callback
+	void poll_events(const Callable &p_input_event_callback);
+	// 清空队列（引擎停止时避免残留事件）
+	void clear_input_events();
 
 	// ---- 访问器 ----
 	OHNativeWindow *get_native_window() const { return native_window; }
 	Size2i get_size() const { return size; }
 	bool is_surface_ready() const { return surface_ready; }
+	Point2i get_last_mouse_position() const { return last_mouse_position; }
+
+	static OHOS_XComponent *get_instance() { return s_instance; }
+
+private:
+	// ---- 鼠标按钮位域转换工具（OHOS 位域 <-> Godot 枚举） ----
+	static MouseButton _mouse_button_from_flags(int p_flags);
+	static MouseButtonMask _mouse_button_mask_from_flags(int p_flags);
 };

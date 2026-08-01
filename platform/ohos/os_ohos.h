@@ -57,6 +57,15 @@ class OS_OHOS : public OS_Unix {
 	String sandbox_files_dir;
 	String sandbox_cache_dir;
 
+	// 系统语言环境（由 main_ohos.cpp 通过 NAPI @ohos.i18n 注入）
+	String system_locale;
+
+	// 设备型号（由 main_ohos.cpp 通过 NAPI 设备信息注入，如 "MateBook Pro"）
+	String model_name;
+
+	// 屏幕密度（1vp = px / density，由 main_ohos.cpp 注入）
+	float screen_density = 1.0f;
+
 protected:
 	virtual void initialize_core() override;
 	virtual void initialize() override;
@@ -98,6 +107,15 @@ public:
 
 	// ---- 沙盒路径注入（由 NAPI 桥调用） ----
 	void set_sandbox_paths(const String &p_files_dir, const String &p_cache_dir);
+
+	// ---- 系统信息注入（由 main_ohos.cpp 通过 NAPI 调用） ----
+	// 设置系统语言（@ohos.i18n 的 system.getDisplayLanguage / system.getSystemLanguage）
+	void set_system_locale(const String &p_locale) { system_locale = p_locale; }
+	// 设置设备型号（@ohos.deviceInfo）
+	void set_model_name(const String &p_model) { model_name = p_model; }
+	// 设置屏幕密度（@ohos.display 的 getDefaultDisplay.densityDPI / 160）
+	void set_screen_density(float p_density) { screen_density = p_density; }
+	float get_screen_density() const { return screen_density; }
 
 	virtual bool _check_internal_feature_support(const String &p_feature) override;
 

@@ -41,6 +41,7 @@
 #include <string>
 #include <thread>
 
+#include <ace/xcomponent/native_interface_xcomponent.h>
 #include <hilog/log.h>
 
 #define OHOS_LOG_DOMAIN 0xD002D01
@@ -57,8 +58,11 @@
  * - 引擎线程（std::thread）：执行 Main::start + Main::iteration（本文件创建）；
  * - 渲染线程：Vulkan 内部（由渲染驱动管理）。
  *
- * 第 1 轮（骨架期）：导出 4 个 NAPI 函数（init/start/stop/dispose），
- * 完成 OS_OHOS 创建、引擎启动/迭代/停止的最小闭环。
+ * 第 2 轮（功能深化）：
+ * - 新增 engine_set_xcomponent：从 ArkTS XComponent onLoad 上下文获取
+ *   OH_NativeXComponent 句柄，创建 OHOS_XComponent 并注册触摸/鼠标/键盘回调；
+ * - engine_initialize 增加系统语言/设备型号/屏幕密度注入；
+ * - 输入事件：ArkUI 主线程回调入队，引擎线程在 process_events 消费。
  */
 
 // 全局崩溃处理器（initialize 时注册）
@@ -67,6 +71,9 @@ static CrashHandlerOHOS crash_handler;
 // NAPI 侧注入的沙盒路径
 static std::string sandbox_files_dir;
 static std::string sandbox_cache_dir;
+
+// XComponent 宿主（编辑器主窗口，由 engine_set_xcomponent 创建）
+static OHOS_XComponent *ohos_xcomponent = nullptr;
 
 // 引擎线程（Main::iteration 循环）
 static std::thread engine_thread;
@@ -110,10 +117,57 @@ static void engine_thread_main() {
 
 // ---- NAPI 导出函数 ----
 
-// 初始化引擎（ArkTS: engine.initialize(filesDir, cacheDir) -> void）
+// 设置 XComponent（ArkTS: godot.setXComponent(xcomponentContext) -> void）
+// 从 XComponent onLoad 回调的 context 中取 OH_NativeXComponent 句柄，
+// 创建 OHOS_XComponent 并注册 surface/touch/mouse/key 事件回调。
+static napi_value engine_set_xcomponent(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+
+	// context.nativeXComponent 为 XComponentNativeInstance，unrap 得到原生句柄
+	napi_value native_xcomponent_val = nullptr;
+	napi_get_named_property(env, args[0], "nativeXComponent", &native_xcomponent_val);
+	OH_NativeXComponent *native_xcomponent = nullptr;
+	if (native_xcomponent_val != nullptr) {
+		napi_unwrap(env, native_xcomponent_val, reinterpret_cast<void **>(&native_xcomponent));
+	}
+	if (!native_xcomponent) {
+		OH_LOG_Print(LOG_APP, LOG_ERROR, OHOS_LOG_DOMAIN, OHOS_LOG_TAG, "setXComponent: no nativeXComponent");
+		return nullptr;
+	}
+
+	// 创建 XComponent 宿主（编辑器单 XComponent，复用已创建的实例）
+	if (!ohos_xcomponent) {
+		ohos_xcomponent = memnew(OHOS_XComponent);
+	}
+
+	// 模拟 SurfaceCreated 事件注册（回调在 on_surface_created 时已有窗口句柄）。
+	// 实际回调注册依赖 OH_NativeXComponent，需先完成 on_surface_created；
+	// 这里保存原生句柄，注册动作放在 surface 回调后由 register_callbacks 完成。
+	// 为兼容「SurfaceCreated 早于 NAPI 调用」顺序，直接尝试注册。
+	// 注：OH_NativeXComponent_RegisterCallback 在任意时刻调用均可，
+	// 回调触发依赖 Surface 生命周期。
+	ohos_xcomponent->register_callbacks();
+	ohos_xcomponent->set_xcomponent(native_xcomponent);
+
+	// 注入 XComponent 到 DisplayServer（若已创建）
+	DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
+	if (ds) {
+		ds->set_main_xcomponent(ohos_xcomponent);
+	}
+
+	OH_LOG_Print(LOG_APP, LOG_INFO, OHOS_LOG_DOMAIN, OHOS_LOG_TAG, "setXComponent: OK");
+	return nullptr;
+}
+
+// 初始化引擎（ArkTS: engine.initialize(filesDir, cacheDir[, locale, model, density]) -> void）
 static napi_value engine_initialize(napi_env env, napi_callback_info info) {
-	size_t argc = 2;
-	napi_value args[2];
+	size_t argc = 5;
+	napi_value args[5];
 	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
 	if (argc >= 1) {
@@ -129,6 +183,19 @@ static napi_value engine_initialize(napi_env env, napi_callback_info info) {
 	// 创建 OS_OHOS 单例并注入沙盒路径
 	OS_OHOS *os = memnew(OS_OHOS);
 	os->set_sandbox_paths(String::utf8(sandbox_files_dir.c_str()), String::utf8(sandbox_cache_dir.c_str()));
+
+	// 注入系统信息（可选参数：语言/型号/密度）
+	if (argc >= 3) {
+		os->set_system_locale(String::utf8(get_string_param(env, args[2]).c_str()));
+	}
+	if (argc >= 4) {
+		os->set_model_name(String::utf8(get_string_param(env, args[3]).c_str()));
+	}
+	if (argc >= 5) {
+		double density = 1.0;
+		napi_get_value_double(env, args[4], &density);
+		os->set_screen_density(static_cast<float>(density));
+	}
 
 	// 注册 OHOS 显示驱动
 	DisplayServerOHOS::register_ohos_driver();
@@ -176,6 +243,13 @@ static napi_value engine_stop(napi_env env, napi_callback_info info) {
 
 // 释放引擎资源（ArkTS: engine.dispose() -> void）
 static napi_value engine_dispose(napi_env env, napi_callback_info info) {
+	// 清空 XComponent 输入队列并销毁
+	if (ohos_xcomponent) {
+		ohos_xcomponent->clear_input_events();
+		memdelete(ohos_xcomponent);
+		ohos_xcomponent = nullptr;
+	}
+
 	// 销毁 OS_OHOS 单例
 	OS_OHOS *os = OS_OHOS::get_singleton();
 	if (os) {
@@ -190,11 +264,12 @@ static napi_value engine_dispose(napi_env env, napi_callback_info info) {
 static napi_value module_init(napi_env env, napi_value exports) {
 	napi_property_descriptor props[] = {
 		{ "initialize", nullptr, engine_initialize, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "setXComponent", nullptr, engine_set_xcomponent, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "start", nullptr, engine_start, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "stop", nullptr, engine_stop, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 4, props);
+	napi_define_properties(env, exports, 5, props);
 	return exports;
 }
 

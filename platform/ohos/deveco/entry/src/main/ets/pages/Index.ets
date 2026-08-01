@@ -6,10 +6,11 @@
  *
  * 生命周期：
  *  - onWindowStageCreate 时启动引擎（本骨架由 UIAbility 调起）；
- *  - XComponent Surface 就绪后 C++ 侧自动创建 Vulkan Surface。
+ *  - XComponent Surface 就绪后 C++ 侧自动创建 Vulkan Surface；
+ *  - XComponent onLoad 时把 nativeXComponent 上下文传给 C++（setXComponent），
+ *    C++ 侧注册触摸/鼠标/键盘事件回调。
  *
- * 第 1 轮（骨架期）：仅承载 XComponent 与 NAPI 初始化/启动调用；
- * 输入事件分发（OnDispatchTouchEvent / 键盘）在完善期接入。
+ * 第 2 轮（功能深化）：接入 setXComponent，并注入系统语言/型号/屏幕密度。
  */
 
 // 导入 C++ 侧 NAPI 模块（moduleName = "godot"，见 native 模块 CMake）
@@ -30,11 +31,16 @@ struct Index {
         type: XComponentType.SURFACE,
         controller: this.xcomponentController
       })
-        .onLoad(() => {
-          // Surface 创建回调：启动 Godot 引擎
+        .onLoad((context?: object) => {
+          // XComponent 加载：把 native 上下文传给 C++（注册输入事件回调）
+          if (context != undefined) {
+            godot.setXComponent(context);
+          }
+          // Surface 就绪后启动 Godot 引擎
           if (!this.engineStarted) {
-            godot.initialize(this.getFilesDir(), this.getCacheDir());
-            godot.start(1920, 1080);
+            godot.initialize(this.getFilesDir(), this.getCacheDir(),
+              this.getSystemLanguage(), this.getModelName(), this.getScreenDensity());
+            godot.start(this.getScreenWidth(), this.getScreenHeight());
             this.engineStarted = true;
           }
         })
@@ -60,5 +66,51 @@ struct Index {
   // 获取应用沙盒 cache 目录
   private getCacheDir(): string {
     return getContext(this).cacheDir;
+  }
+
+  // 系统语言（@ohos.i18n）——用于 Godot 编辑器本地化
+  private getSystemLanguage(): string {
+    try {
+      return i18n.System.getSystemLanguage();
+    } catch (e) {
+      return 'en';
+    }
+  }
+
+  // 设备型号（@ohos.deviceInfo）
+  private getModelName(): string {
+    try {
+      return deviceInfo.productModel;
+    } catch (e) {
+      return 'HarmonyOS Device';
+    }
+  }
+
+  // 屏幕密度（@ohos.display densityDPI / 160）
+  private getScreenDensity(): number {
+    try {
+      let display = display.getDefaultDisplaySync();
+      return display.densityDPI / 160.0;
+    } catch (e) {
+      return 1.0;
+    }
+  }
+
+  // 屏幕宽度（vp -> px 换算由引擎侧 density 处理）
+  private getScreenWidth(): number {
+    try {
+      return display.getDefaultDisplaySync().width;
+    } catch (e) {
+      return 1920;
+    }
+  }
+
+  // 屏幕高度
+  private getScreenHeight(): number {
+    try {
+      return display.getDefaultDisplaySync().height;
+    } catch (e) {
+      return 1080;
+    }
   }
 }

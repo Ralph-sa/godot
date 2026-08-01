@@ -64,9 +64,20 @@ class DisplayServerOHOS : public DisplayServer {
 	// 主窗口尺寸
 	Size2i window_size;
 
+	// ---- 光标状态（第 2 轮：记录形状，native 光标由 ArkUI 侧实现） ----
+	DisplayServerEnums::CursorShape cursor_shape = DisplayServerEnums::CURSOR_ARROW;
+	Ref<Resource> custom_cursor;
+	Vector2 custom_cursor_hotspot;
+	DisplayServerEnums::CursorShape custom_cursor_shape = DisplayServerEnums::CURSOR_ARROW;
+
+	// 垂直同步模式（默认开启）
+	DisplayServerEnums::VSyncMode vsync_mode = DisplayServerEnums::VSYNC_ENABLED;
+
 public:
 	// ---- 注册入口（main_ohos.cpp / 全局初始化时调用） ----
 	static void register_ohos_driver();
+	// 平台单例访问（DisplayServer 非 Object 派生类，不能 cast_to，用静态指针）
+	static DisplayServerOHOS *get_singleton_ohos();
 
 	DisplayServerOHOS(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, const Vector2i &p_size);
 	virtual ~DisplayServerOHOS();
@@ -74,6 +85,16 @@ public:
 	// ---- 渲染驱动 ----
 	static Vector<String> get_rendering_drivers_func();
 	String get_rendering_driver() const { return rendering_driver; }
+
+	// ---- 光标与鼠标（编辑器必需，第 2 轮） ----
+	virtual void cursor_set_shape(DisplayServerEnums::CursorShape p_shape) override;
+	virtual DisplayServerEnums::CursorShape cursor_get_shape() const override;
+	virtual void cursor_set_custom_image(const Ref<Resource> &p_cursor, DisplayServerEnums::CursorShape p_shape = DisplayServerEnums::CURSOR_ARROW, const Vector2 &p_hotspot = Vector2()) override;
+	virtual Point2i mouse_get_position() const override;
+
+	// ---- 垂直同步 ----
+	virtual void window_set_vsync_mode(DisplayServerEnums::VSyncMode p_vsync_mode, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;
+	virtual DisplayServerEnums::VSyncMode window_get_vsync_mode(DisplayServerEnums::WindowID p_window) const override;
 
 	// ---- 窗口（骨架：主窗口尺寸/标题） ----
 	virtual Size2i window_get_size(DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) const override;
