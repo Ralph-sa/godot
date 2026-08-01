@@ -37,6 +37,7 @@
 #include "core/string/ustring.h"
 #include "core/templates/local_vector.h"
 #include "core/variant/callable.h"
+#include "servers/display/display_server_enums.h"
 
 class OHOS_XComponent;
 
@@ -86,6 +87,9 @@ private:
 	Callable input_text_callback;
 	Callable drop_files_callback;
 
+	// 窗口模式（第 3 轮：全屏/最大化经 NAPI 请求 ArkUI 窗口）
+	DisplayServerEnums::WindowMode window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
+
 	// XComponent 宿主（仅 MAIN/SUB 类型有效）
 	OHOS_XComponent *xcomponent = nullptr;
 
@@ -122,6 +126,9 @@ public:
 
 	OHOS_XComponent *get_xcomponent() const { return xcomponent; }
 	void set_xcomponent(OHOS_XComponent *p_xc) { xcomponent = p_xc; }
+
+	DisplayServerEnums::WindowMode get_window_mode() const { return window_mode; }
+	void set_window_mode(DisplayServerEnums::WindowMode p_mode) { window_mode = p_mode; }
 
 	// 窗口生命周期（骨架期：由 DisplayServer 调用；后续轮次桥接 ArkUI Window API）
 	Error show();

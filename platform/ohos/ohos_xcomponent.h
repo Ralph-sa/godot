@@ -96,6 +96,10 @@ class OHOS_XComponent {
 	static void dispatch_touch_event_cb(OH_NativeXComponent *component, void *window);
 	static void dispatch_mouse_event_cb(OH_NativeXComponent *component, void *window);
 	static void dispatch_key_event_cb(OH_NativeXComponent *component, void *window);
+	static void focus_event_cb(OH_NativeXComponent *component, void *window);
+
+	// 窗口聚焦状态（第 3 轮：由 focus 回调维护）
+	bool window_focused = false;
 
 public:
 	OHOS_XComponent();
@@ -117,6 +121,10 @@ public:
 	void handle_touch_event(OH_NativeXComponent *p_component, void *p_window);
 	void handle_mouse_event(OH_NativeXComponent *p_component, void *p_window);
 	void handle_key_event(OH_NativeXComponent *p_component, void *p_window);
+	void handle_focus_event(bool p_focused);
+
+	// ---- 访问器 ----
+	bool is_window_focused() const { return window_focused; }
 
 	// ---- 事件消费（DisplayServer::process_events 调用，运行在引擎线程） ----
 	// 从队列取走全部事件并投递到窗口的 input_event_callback

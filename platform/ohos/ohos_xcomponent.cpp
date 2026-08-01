@@ -30,6 +30,7 @@
 
 #include "ohos_xcomponent.h"
 
+#include "display_server_ohos.h"
 #include "key_mapping_ohos.h"
 
 #include "core/input/input_event.h"
@@ -115,6 +116,14 @@ void OHOS_XComponent::dispatch_key_event_cb(OH_NativeXComponent *component, void
 	}
 }
 
+void OHOS_XComponent::focus_event_cb(OH_NativeXComponent *component, void *window) {
+	// ArkUI 主线程回调：窗口聚焦/失焦（RegisterFocusEventCallback）
+	OHOS_XComponent *xc = get_instance();
+	if (xc) {
+		xc->handle_focus_event(true);
+	}
+}
+
 // ---- Surface 生命周期 ----
 
 void OHOS_XComponent::on_surface_created(OH_NativeXComponent *p_component, OHNativeWindow *p_window) {
@@ -139,8 +148,19 @@ void OHOS_XComponent::on_surface_created(OH_NativeXComponent *p_component, OHNat
 
 void OHOS_XComponent::on_surface_changed(int p_width, int p_height) {
 	// Surface 尺寸变化回调（旋转/窗口缩放触发）
-	size = Size2i(p_width, p_height);
+	// 通知 DisplayServer 同步窗口尺寸并触发 rect_changed 回调（第 3 轮）
+	Size2i new_size(p_width, p_height);
+	if (new_size == size) {
+		return; // 尺寸未变，忽略
+	}
+	size = new_size;
 	print_verbose(vformat("OHOS_XComponent: surface resized to %dx%d", p_width, p_height));
+
+	// 通知 DisplayServer：引擎侧同步窗口尺寸、触发 rect_changed/window 事件
+	DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
+	if (ds) {
+		ds->notify_main_surface_resized();
+	}
 }
 
 void OHOS_XComponent::on_surface_destroyed() {
@@ -174,6 +194,11 @@ int OHOS_XComponent::register_callbacks() {
 
 	// 注册键盘回调（PC/2in1 键盘，since 10）
 	ret |= OH_NativeXComponent_RegisterKeyEventCallback(native_xcomponent, dispatch_key_event_cb);
+
+	// 注册聚焦回调（窗口焦点变化，since 10）
+	// 注：失焦时系统不回调本函数（ArkUI 仅回调获得焦点），
+	// 失焦事件由 ArkTS 侧 onBlur 通知（第 4 轮接入）。
+	ret |= OH_NativeXComponent_RegisterFocusEventCallback(native_xcomponent, focus_event_cb);
 
 	return ret;
 }
@@ -317,6 +342,16 @@ void OHOS_XComponent::handle_key_event(OH_NativeXComponent *p_component, void *p
 
 	MutexLock lock(input_events_mutex);
 	input_events.push_back(ev);
+}
+
+void OHOS_XComponent::handle_focus_event(bool p_focused) {
+	// 窗口聚焦状态更新：通知 DisplayServer 触发 WINDOW_EVENT_FOCUS_IN/OUT
+	// （对应 macOS 的 windowDidBecomeMain / windowDidResignMain）
+	window_focused = p_focused;
+	DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
+	if (ds) {
+		ds->notify_main_surface_focus(p_focused);
+	}
 }
 
 // ---- 事件消费 ----

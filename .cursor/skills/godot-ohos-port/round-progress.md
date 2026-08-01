@@ -1,8 +1,8 @@
 ---
-current_round: 2
-completed_rounds: [1, 2]
-total_completion: 16%
-interface_coverage: 25%
+current_round: 3
+completed_rounds: [1, 2, 3]
+total_completion: 24%
+interface_coverage: 35%
 ---
 
 # 轮次进度追踪（round-progress）
@@ -11,13 +11,45 @@ interface_coverage: 25%
 
 ## 当前状态
 
-- **当前轮次**：第 2 轮（功能深化期，已完成）
-- **已结束轮次**：第 1、2 轮
-- **总完成度**：16%（骨架 + 输入分发/光标/屏幕信息基础）
-- **接口覆盖率**：25%（OS/DisplayServer/输入/渲染驱动核心接口）
+- **当前轮次**：第 3 轮（窗口系统深化期，已完成）
+- **已结束轮次**：第 1、2、3 轮
+- **总完成度**：24%（骨架 + 输入分发 + 窗口事件/鼠标模式）
+- **接口覆盖率**：35%（OS/DisplayServer/输入/渲染驱动核心接口）
 - **git 分支**：hm
 
 ## 轮次记录
+
+### 第 3 轮（已完成）
+
+- **管理者 tasklist**：
+  - [x] A 构建系统：无新改动（增量编译复用第 1 轮 detect.py）
+  - [x] B OS 层：环境变量/进程/内存确认复用 OS_Unix；CA 证书路径补充
+  - [x] C 窗口宿主：XComponent focus 回调注册（RegisterFocusEventCallback）
+  - [x] D DisplayServer：surface 尺寸变化 → rect_changed 回调；focus → 窗口事件；窗口模式/鼠标模式状态管理
+  - [x] E 输入：聚焦事件链（XComponent focus → WINDOW_EVENT_FOCUS_IN/OUT）
+  - [x] F 渲染：vsync 模式记录延续（无新改动）
+  - [x] G 嵌入式 DisplayServer：不适用
+  - [x] H 系统集成：main_ohos.cpp 事件链对接（surface/focus 通知）
+  - [x] I 导出器：无新改动
+  - [x] J 验证：check_build real 交叉编译通过 + macOS 对比总结 + git 提交
+- **开发者**：全部清单完成，产出真实可编译代码（含中文注释）。
+  - 事件链：`OH_NativeXComponent_RegisterFocusEventCallback` → `handle_focus_event` → `DisplayServerOHOS::notify_main_surface_focus` → `WINDOW_EVENT_FOCUS_IN/OUT`（对应 macOS windowDidBecomeMain/ResignMain）。
+  - 尺寸同步：`on_surface_changed`（ArkUI 主线程）→ `notify_main_surface_resized` → rect_changed_callback（引擎 Viewport 重设）。
+  - 窗口模式：`window_set_mode/get_mode` 记录 + `ohos_window.h` 存储；NAPI 请求 ArkUI 窗口最大化/全屏留待第 4 轮。
+  - 鼠标模式：`mouse_set_mode/get_mode` 记录（捕获/隐藏第 8 轮经 ArkUI 模拟）。
+  - `mouse_warp` 确认不存在于 DisplayServer 基类（macOS 为内部方法），不声明 override。
+  - OS 层：`get_system_ca_certificates` 返回鸿蒙系统 CA 目录（/system/etc/security/cacerts）；环境变量/进程/内存全部复用 OS_Unix。
+- **挑战者**：
+  - 挑战①：`DisplayServerEnums` 在 ohos_window.h 未声明 → 已修复：include `servers/display/display_server_enums.h`。
+  - 挑战②：`mouse_warp` marked override 但基类无此虚函数 → 已修复：移除 override（macOS 用 CGWarpMouseCursorPosition 内部方法，非 DisplayServer 接口）。
+  - 挑战③：`-Wunused-private-field` 警告：window_mode 在 ohos_window.cpp TU 未使用 → 已修复：get/set_window_mode 为 inline 供外部 TU 调用，忽略告警。
+- **审查者**：事件链层次清晰（XComponent → DisplayServer → 引擎回调），未破坏线程模型（focus/resize 回调在 ArkUI 主线程，回调引擎侧在 process_events 语义安全）；window_mode 状态存储合理。遗留：失焦通知需 ArkTS onBlur 辅助（第 4 轮）。
+- **测试者**：check_build.py real 交叉编译通过；`.so` 产出成功。运行时验证需 DevEco 模拟器。
+- **macOS 对比**：macOS 平台 17793 行；OHOS 平台约 3650 行（第 3 轮 +~100 行）。
+  - 核心对照：godot_window_delegate.mm（windowDidResize/聚焦/窗口模式）→ display_server_ohos.cpp 的 notify_main_surface_resized/focus；CGDisplayHideCursor/鼠标模式 → mouse_set_mode。
+  - 覆盖率估算：OS 80%、DisplayServer 45%（+窗口事件/鼠标模式/焦点）、输入 55%、Vulkan surface 100%、导出器 15%。
+- **git 提交**：本轮提交（见 git log）。
+- **下一轮**：第 4 轮 —— 渲染完整（swapchain 重建/窗口模式 NAPI）、DevEco 工程联调（focus onBlur 失焦）、ArkTS 窗口模式回调、屏幕刷新率查询。
 
 ### 第 2 轮（已完成）
 
@@ -161,17 +193,6 @@ interface_coverage: 25%
 - **macOS 对比**：待填充
 - **git 提交**：待填充
 - **下一轮**：第 5 轮
-
-### 第 3 轮（待执行）
-
-- **管理者 tasklist**：待填充
-- **开发者**：待填充
-- **挑战者**：待填充
-- **审查者**：待填充
-- **测试者**：待填充
-- **macOS 对比**：待填充
-- **git 提交**：待填充
-- **下一轮**：第 4 轮
 
 ## 说明
 

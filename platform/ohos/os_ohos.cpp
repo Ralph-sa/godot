@@ -223,8 +223,9 @@ Error OS_OHOS::shell_open(const String &p_uri) {
 }
 
 String OS_OHOS::get_system_ca_certificates() {
-	// 鸿蒙系统 CA 证书路径（沙盒可能不可读，骨架期返回空）
-	return String();
+	// 鸿蒙系统 CA 证书目录（与 Android 同构，/system/etc/security/cacerts）。
+	// 沙盒内应用只读系统分区，此处仅返回路径供 TLS 加载。
+	return "/system/etc/security/cacerts";
 }
 
 Error OS_OHOS::get_entropy(uint8_t *r_buffer, int p_bytes) {

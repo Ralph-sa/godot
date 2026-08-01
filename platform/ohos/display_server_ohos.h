@@ -73,6 +73,15 @@ class DisplayServerOHOS : public DisplayServer {
 	// 垂直同步模式（默认开启）
 	DisplayServerEnums::VSyncMode vsync_mode = DisplayServerEnums::VSYNC_ENABLED;
 
+	// 窗口模式（默认窗口化；全屏/最大化经 NAPI 请求 ArkUI 窗口）
+	DisplayServerEnums::WindowMode window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
+
+	// 主窗口聚焦状态（由 XComponent focus 回调维护）
+	bool main_window_focused = false;
+
+	// 鼠标模式（编辑器轨道控制用；warp 第 8 轮经 NAPI 模拟）
+	DisplayServerEnums::MouseMode mouse_mode = DisplayServerEnums::MOUSE_MODE_VISIBLE;
+
 public:
 	// ---- 注册入口（main_ohos.cpp / 全局初始化时调用） ----
 	static void register_ohos_driver();
@@ -91,6 +100,8 @@ public:
 	virtual DisplayServerEnums::CursorShape cursor_get_shape() const override;
 	virtual void cursor_set_custom_image(const Ref<Resource> &p_cursor, DisplayServerEnums::CursorShape p_shape = DisplayServerEnums::CURSOR_ARROW, const Vector2 &p_hotspot = Vector2()) override;
 	virtual Point2i mouse_get_position() const override;
+	virtual void mouse_set_mode(DisplayServerEnums::MouseMode p_mode) override;
+	virtual DisplayServerEnums::MouseMode mouse_get_mode() const override;
 
 	// ---- 垂直同步 ----
 	virtual void window_set_vsync_mode(DisplayServerEnums::VSyncMode p_vsync_mode, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;
@@ -157,6 +168,12 @@ public:
 
 	// ---- 事件处理（骨架期：由引擎主循环驱动的输入队列，第 4 轮实现） ----
 	virtual void process_events() override;
+
+	// ---- 窗口通知（由 OHOS_XComponent 回调调用，ArkUI 主线程） ----
+	// Surface 尺寸变化：同步窗口尺寸并触发 rect_changed 回调
+	void notify_main_surface_resized();
+	// 窗口聚焦状态变化：触发 WINDOW_EVENT_FOCUS_IN/OUT
+	void notify_main_surface_focus(bool p_focused);
 
 	// ---- 能力声明 ----
 	virtual String get_name() const override;

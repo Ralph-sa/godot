@@ -188,6 +188,42 @@ void DisplayServerOHOS::process_events() {
 	}
 }
 
+// ---- 窗口通知（XComponent 回调触发） ----
+
+void DisplayServerOHOS::notify_main_surface_resized() {
+	// Surface 尺寸变化：同步窗口尺寸并触发 rect_changed 回调，
+	// 编辑器 Viewport 据此重设渲染尺寸（对应 macOS windowDidResize）
+	if (!main_xcomponent || !windows.has(DisplayServerEnums::MAIN_WINDOW_ID)) {
+		return;
+	}
+	Size2i new_size = main_xcomponent->get_size();
+	if (new_size == window_size) {
+		return;
+	}
+	window_size = new_size;
+	OHOS_Window *win = windows[DisplayServerEnums::MAIN_WINDOW_ID];
+	win->set_rect(Rect2i(win->get_rect().position, new_size));
+
+	// 触发 rect_changed 回调（引擎 Viewport 更新）
+	Callable rect_cb = win->get_rect_changed_callback();
+	if (rect_cb.is_valid()) {
+		rect_cb.call(win->get_rect());
+	}
+}
+
+void DisplayServerOHOS::notify_main_surface_focus(bool p_focused) {
+	// 窗口聚焦状态变化：触发 WINDOW_EVENT_FOCUS_IN/OUT
+	// （对应 macOS windowDidBecomeMain / windowDidResignMain）
+	main_window_focused = p_focused;
+	if (!windows.has(DisplayServerEnums::MAIN_WINDOW_ID)) {
+		return;
+	}
+	Callable cb = windows[DisplayServerEnums::MAIN_WINDOW_ID]->get_window_event_callback();
+	if (cb.is_valid()) {
+		cb.call(p_focused ? DisplayServerEnums::WINDOW_EVENT_FOCUS_IN : DisplayServerEnums::WINDOW_EVENT_FOCUS_OUT);
+	}
+}
+
 // ---- 光标与鼠标 ----
 
 void DisplayServerOHOS::cursor_set_shape(DisplayServerEnums::CursorShape p_shape) {
@@ -214,6 +250,17 @@ Point2i DisplayServerOHOS::mouse_get_position() const {
 		return main_xcomponent->get_last_mouse_position();
 	}
 	return Point2i();
+}
+
+void DisplayServerOHOS::mouse_set_mode(DisplayServerEnums::MouseMode p_mode) {
+	// 鼠标模式（可见/隐藏/捕获）：记录状态。
+	// XComponent 不提供原生捕获 API，第 8 轮通过 ArkUI 侧隐藏系统光标 +
+	// 相对位移事件模拟（对应 macOS CGDisplayHideCursor / CGAssociateMouseAndMouseCursorPosition）。
+	mouse_mode = p_mode;
+}
+
+DisplayServerEnums::MouseMode DisplayServerOHOS::mouse_get_mode() const {
+	return mouse_mode;
 }
 
 // ---- 垂直同步 ----
@@ -332,11 +379,22 @@ Size2i DisplayServerOHOS::window_get_size_with_decorations(DisplayServerEnums::W
 }
 
 void DisplayServerOHOS::window_set_mode(DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::WindowID p_window) {
-	// 骨架期：窗口模式（全屏/最大化等）后续接入 ArkUI Window API
+	// 窗口模式（窗口化/最大化/全屏）：记录状态，并请求 ArkUI 侧调整系统窗口。
+	// 鸿蒙窗口由 UIAbility/WindowStage 管理，C++ 无法直接修改，
+	// 通过 NAPI 回调通知 ArkTS 设置 maximize/fullScreen（第 4 轮接入）。
+	window_mode = p_mode;
+	// 记录到窗口对象
+	if (windows.has(p_window)) {
+		windows[p_window]->set_window_mode(p_mode);
+	}
+	print_verbose(vformat("DisplayServerOHOS: window mode %d", static_cast<int>(p_mode)));
 }
 
 DisplayServerEnums::WindowMode DisplayServerOHOS::window_get_mode(DisplayServerEnums::WindowID p_window) const {
-	return DisplayServerEnums::WINDOW_MODE_WINDOWED; // 骨架期：窗口模式
+	if (windows.has(p_window)) {
+		return windows[p_window]->get_window_mode();
+	}
+	return window_mode;
 }
 
 bool DisplayServerOHOS::window_is_maximize_allowed(DisplayServerEnums::WindowID p_window) const {
@@ -356,12 +414,17 @@ void DisplayServerOHOS::window_request_attention(DisplayServerEnums::WindowID p_
 }
 
 void DisplayServerOHOS::window_move_to_foreground(DisplayServerEnums::WindowID p_window) {
-	// 骨架期：窗口前置后续实现
+	// 窗口前置：鸿蒙侧通过 ArkTS window.moveWindowToFront() 实现（第 4 轮 NAPI 接入）。
+	// 骨架期仅记录。
+	print_verbose("DisplayServerOHOS: window_move_to_foreground (NAPI pending)");
 }
 
 bool DisplayServerOHOS::window_is_focused(DisplayServerEnums::WindowID p_window) const {
-	// 骨架期：主窗口视为聚焦
-	return p_window == DisplayServerEnums::MAIN_WINDOW_ID;
+	// 真实聚焦状态（XComponent focus 回调维护，对应 macOS isKeyWindow）
+	if (p_window == DisplayServerEnums::MAIN_WINDOW_ID) {
+		return main_window_focused;
+	}
+	return false;
 }
 
 bool DisplayServerOHOS::window_can_draw(DisplayServerEnums::WindowID p_window) const {
