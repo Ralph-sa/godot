@@ -228,7 +228,7 @@ void OHOS_XComponent::handle_touch_event(OH_NativeXComponent *p_component, void 
 			ev->set_pressed(point.type == OH_NATIVEXCOMPONENT_DOWN);
 
 			MutexLock lock(input_events_mutex);
-			input_events.push_back(ev);
+			_enqueue_input_event(ev);
 
 			if (point.type == OH_NATIVEXCOMPONENT_UP) {
 				touch_state.erase(point.id);
@@ -250,7 +250,7 @@ void OHOS_XComponent::handle_touch_event(OH_NativeXComponent *p_component, void 
 			ev->set_relative(rel);
 
 			MutexLock lock(input_events_mutex);
-			input_events.push_back(ev);
+			_enqueue_input_event(ev);
 
 			touch_state[point.id] = pos;
 		}
@@ -283,7 +283,7 @@ void OHOS_XComponent::handle_mouse_event(OH_NativeXComponent *p_component, void 
 			ev->set_button_mask(_mouse_button_mask_from_flags(mouse_event.button));
 
 			MutexLock lock(input_events_mutex);
-			input_events.push_back(ev);
+			_enqueue_input_event(ev);
 			break;
 		}
 		case OH_NATIVEXCOMPONENT_MOUSE_MOVE: {
@@ -302,7 +302,7 @@ void OHOS_XComponent::handle_mouse_event(OH_NativeXComponent *p_component, void 
 			ev->set_button_mask(_mouse_button_mask_from_flags(mouse_event.button));
 
 			MutexLock lock(input_events_mutex);
-			input_events.push_back(ev);
+			_enqueue_input_event(ev);
 			break;
 		}
 		default:
@@ -346,7 +346,7 @@ void OHOS_XComponent::handle_key_event(OH_NativeXComponent *p_component, void *p
 	ev->set_echo(false);
 
 	MutexLock lock(input_events_mutex);
-	input_events.push_back(ev);
+	_enqueue_input_event(ev);
 }
 
 void OHOS_XComponent::handle_focus_event(bool p_focused) {
@@ -386,6 +386,15 @@ void OHOS_XComponent::clear_input_events() {
 	input_events.clear();
 }
 
+void OHOS_XComponent::_enqueue_input_event(const Ref<InputEvent> &p_event) {
+	// 带上限保护的入队（调用方持有 input_events_mutex）：
+	// 队列满时丢弃最旧事件，防止高频触摸/鼠标/滚轮导致内存膨胀
+	if (input_events.size() >= MAX_QUEUED_INPUT_EVENTS) {
+		input_events.remove_at(0);
+	}
+	input_events.push_back(p_event);
+}
+
 // ---- 输入注入（第 8 轮：输入法/触控板，主线程调用） ----
 
 void OHOS_XComponent::push_input_event(const String &p_text, Key p_keycode, char32_t p_unicode) {
@@ -402,7 +411,7 @@ void OHOS_XComponent::push_input_event(const String &p_text, Key p_keycode, char
 		ev->set_unicode(p_cp);
 
 		MutexLock lock(input_events_mutex);
-		input_events.push_back(ev);
+		_enqueue_input_event(ev);
 	};
 
 	if (p_keycode == Key::NONE) {
@@ -448,7 +457,7 @@ void OHOS_XComponent::push_wheel_event(const Vector2 &p_delta) {
 	{
 		MutexLock lock(input_events_mutex);
 		ev->set_pressed(true);
-		input_events.push_back(ev);
+		_enqueue_input_event(ev);
 		Ref<InputEventMouseButton> ev_up;
 		ev_up.instantiate();
 		ev_up->set_position(pos);
@@ -456,7 +465,7 @@ void OHOS_XComponent::push_wheel_event(const Vector2 &p_delta) {
 		ev_up->set_button_index(button);
 		ev_up->set_button_mask(MouseButtonMask::NONE);
 		ev_up->set_pressed(false);
-		input_events.push_back(ev_up);
+		_enqueue_input_event(ev_up);
 	}
 }
 

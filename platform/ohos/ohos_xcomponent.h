@@ -80,6 +80,13 @@ class OHOS_XComponent {
 	Vector<Ref<InputEvent>> input_events;
 	Mutex input_events_mutex;
 
+	// 输入队列上限（第 9 轮：防高频触摸/鼠标事件导致内存膨胀）
+	// 超出时丢弃最旧事件，引擎侧保持最新状态（对应 macOS 输入事件合并语义）
+	static constexpr int MAX_QUEUED_INPUT_EVENTS = 4096;
+
+	// 入队（带上限保护）：超限丢弃最旧事件
+	void _enqueue_input_event(const Ref<InputEvent> &p_event);
+
 	// 活动触摸点状态（id -> 位置），用于生成相对位移
 	HashMap<int32_t, Vector2> touch_state;
 

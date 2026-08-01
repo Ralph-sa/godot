@@ -24,6 +24,8 @@ import { display } from '@ohos.display';
 import { pasteboard } from '@ohos.pasteboard';
 // 系统文件选择器（第 5 轮：编辑器文件对话框，@ohos.file.picker）
 import { picker } from '@ohos.file.picker';
+// 文件授权持久化（第 9 轮：公共目录 URI 持久化授权，@ohos.fileshare）
+import { fileshare } from '@ohos.fileshare';
 // 窗口模式（第 5 轮：全屏/最大化经 @ohos.window 应用）
 import { window } from '@ohos.window';
 // 系统指针（第 7 轮：鼠标捕获/隐藏；第 8 轮：光标形状 setPointerStyle）
@@ -230,6 +232,21 @@ struct Index {
     let uriList: string[] = [];
     documentPicker.select(pickerOptions).then((uris: string[]) => {
       uriList = uris;
+      // 第 9 轮：持久化授权（公共目录/文档 URI 跨会话可读）。
+      // fileshare.persistPermission 使所选 URI 授权在应用重启后仍有效，
+      // 否则仅当次会话有效（对应 macOS security-scoped bookmarks 语义）。
+      let policies: Array<fileshare.PolicyInfo> = [];
+      for (let i = 0; i < uriList.length; i++) {
+        policies.push({
+          uri: uriList[i],
+          type: fileshare.PolicyType.READ_ACCESS,
+        });
+      }
+      if (policies.length > 0) {
+        fileshare.persistPermission(policies).catch(() => {
+          // 授权失败不阻塞：本次会话内仍可读取
+        });
+      }
     }).catch(() => {
       uriList = [];
     }).finally(() => {

@@ -240,8 +240,8 @@ String OS_OHOS::get_system_ca_certificates() {
 String OS_OHOS::get_system_dir(SystemDir p_dir, bool p_shared_storage) const {
 	// 系统公共目录（桌面/文档/下载等）：鸿蒙 App 沙盒内不可直接访问系统目录。
 	// 与 macOS NSSearchPathForDirectoriesInDomains 对应，但沙盒模型下
-	// 全部映射到 filesDir；访问真实公共目录需 FilePicker 持久化授权
-	//（第 8 轮完善期接入 @ohos.file.fileAccess）。
+	// 全部映射到 filesDir；访问真实公共目录需 FilePicker 选择 + 持久化授权
+	//（第 8/9 轮：DocumentViewPicker + @ohos.fileshare.persistPermission）。
 	return sandbox_files_dir;
 }
 

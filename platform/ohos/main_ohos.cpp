@@ -685,6 +685,12 @@ static void engine_thread_main() {
 	}
 
 	while (engine_running) {
+		// Surface 未就绪（窗口最小化/隐藏/未创建）时休眠节流：
+		// Godot 渲染无 Surface 时 present 等待不会发生，忙轮询会空转 CPU
+		//（对应 macOS CVDisplayLink 帧调度；此处以 60fps 间隔兜底）。
+		if (ohos_xcomponent && !ohos_xcomponent->is_surface_ready()) {
+			OS::get_singleton()->delay_usec(16000);
+		}
 		// 单帧迭代：返回 true 表示引擎请求退出；false 表示继续
 		if (Main::iteration()) {
 			break;
