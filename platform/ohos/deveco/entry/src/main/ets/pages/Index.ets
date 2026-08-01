@@ -17,21 +17,39 @@
 import godot from 'libgodot.so';
 
 // 系统能力：语言/设备/显示信息（第 4 轮联调注入）
-import { System as i18nSystem } from '@ohos.i18n';
-import { deviceInfo } from '@ohos.deviceInfo';
-import { display } from '@ohos.display';
+// API 26：@ohos 系统模块均以默认导出方式导入
+import i18n from '@ohos.i18n';
+import deviceInfo from '@ohos.deviceInfo';
+import display from '@ohos.display';
 // 剪贴板（第 5 轮：编辑器复制/粘贴，@ohos.pasteboard）
-import { pasteboard } from '@ohos.pasteboard';
+import pasteboard from '@ohos.pasteboard';
 // 系统文件选择器（第 5 轮：编辑器文件对话框，@ohos.file.picker）
-import { picker } from '@ohos.file.picker';
+import picker from '@ohos.file.picker';
 // 文件授权持久化（第 9 轮：公共目录 URI 持久化授权，@ohos.fileshare）
-import { fileshare } from '@ohos.fileshare';
+import fileshare from '@ohos.fileshare';
 // 窗口模式（第 5 轮：全屏/最大化经 @ohos.window 应用）
-import { window } from '@ohos.window';
+import window from '@ohos.window';
 // 系统指针（第 7 轮：鼠标捕获/隐藏；第 8 轮：光标形状 setPointerStyle）
-import { pointer } from '@ohos.multimodalInput.pointer';
+import pointer from '@ohos.multimodalInput.pointer';
 // 输入设备（第 8 轮：手柄枚举 inputDevice.getDeviceList）
-import { inputDevice } from '@ohos.multimodalInput.inputDevice';
+import inputDevice from '@ohos.multimodalInput.inputDevice';
+
+// 屏幕信息回传引擎（updateDisplays 数据载体）
+interface DisplayInfo {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  dpi: number;
+  refresh: number;
+}
+
+// 手柄信息回传引擎（enumerateGamepads 数据载体）
+interface GamepadInfo {
+  id: number;
+  name: string;
+  guid: string;
+}
 
 @Entry
 @Component
@@ -143,7 +161,7 @@ struct Index {
   // 系统语言（@ohos.i18n）——用于 Godot 编辑器本地化
   private getSystemLanguage(): string {
     try {
-      return i18nSystem.getSystemLanguage();
+      return i18n.System.getSystemLanguage();
     } catch (e) {
       return 'en';
     }
@@ -161,8 +179,8 @@ struct Index {
   // 屏幕密度（@ohos.display densityDPI / 160）
   private getScreenDensity(): number {
     try {
-      let display = display.getDefaultDisplaySync();
-      return display.densityDPI / 160.0;
+      let defaultDisplay: display.Display = display.getDefaultDisplaySync();
+      return defaultDisplay.densityDPI / 160.0;
     } catch (e) {
       return 1.0;
     }
@@ -225,7 +243,7 @@ struct Index {
   // 打开系统文件选择器，选择结果回传 C++（godot.filePickerResult）
   private openFilePicker(title: string, mode: number): void {
     // FileDialogMode: 0 打开单文件 / 1 打开多文件 / 2 打开目录 / 3 打开任意 / 4 保存
-    let pickerOptions: picker.DocumentViewPickerOptions = {
+    let pickerOptions: picker.DocumentSelectOptions = {
       maxSelectNumber: (mode == 1) ? 100 : 1,
     };
     let documentPicker = new picker.DocumentViewPicker(getContext(this));
@@ -235,11 +253,12 @@ struct Index {
       // 第 9 轮：持久化授权（公共目录/文档 URI 跨会话可读）。
       // fileshare.persistPermission 使所选 URI 授权在应用重启后仍有效，
       // 否则仅当次会话有效（对应 macOS security-scoped bookmarks 语义）。
+      // API 26：PolicyInfo 为 { uri, operationMode }，读权限取 OperationMode.READ_MODE
       let policies: Array<fileshare.PolicyInfo> = [];
       for (let i = 0; i < uriList.length; i++) {
         policies.push({
           uri: uriList[i],
-          type: fileshare.PolicyType.READ_ACCESS,
+          operationMode: fileshare.OperationMode.READ_MODE,
         });
       }
       if (policies.length > 0) {
@@ -266,11 +285,11 @@ struct Index {
       } else if (mode == 3) {
         win.setWindowLayoutFullScreen(true);
       } else if (mode == 1001) {
-        win.setWindowTopMost(true);
+        win.setWindowTopmost(true);
       } else {
         // 恢复正常窗口（退出全屏/最大化/取消置顶）
         win.setWindowLayoutFullScreen(false);
-        win.setWindowTopMost(false);
+        win.setWindowTopmost(false);
       }
     } catch (e) {
       // 窗口操作失败：忽略（引擎内窗口状态已记录）
@@ -281,18 +300,19 @@ struct Index {
 
   // 查询全部屏幕（位置/尺寸/DPI/刷新率）并回传引擎
   private updateDisplays(): void {
-    let displayList: Array<Object> = [];
+    let displayList: Array<DisplayInfo> = [];
     display.getAllDisplays().then((displays: Array<display.Display>) => {
       for (let i = 0; i < displays.length; i++) {
         let d: display.Display = displays[i];
-        displayList.push({
+        let info: DisplayInfo = {
           x: 0,
           y: 0,
           w: d.width,
           h: d.height,
           dpi: d.densityDPI,
           refresh: d.refreshRate
-        });
+        };
+        displayList.push(info);
       }
     }).catch(() => {
       // 查询失败：引擎保持单屏默认
@@ -309,31 +329,35 @@ struct Index {
     try {
       if (op == 0) {
         // 创建原生子窗口（编辑器子窗口：弹窗/工具面板）
-        window.createWindow(getContext(this), { name: key, windowType: window.WindowType.WINDOW_TYPE_FLOAT, ctx: getContext(this) }).then((win: window.Window) => {
+        // API 26：createWindow(config) 只需传入 Configuration（含 name/windowType/ctx）
+        let config: window.Configuration = {
+          name: key,
+          windowType: window.WindowType.TYPE_FLOAT,
+          ctx: getContext(this)
+        };
+        window.createWindow(config).then((win: window.Window) => {
           win.moveWindowTo(a, b);
           win.resize(c, d);
         });
       } else if (op == 1) {
-        window.findWindow(key).then((win: window.Window) => {
-          win.destroyWindow();
-        });
+        // findWindow 为同步 API：直接取窗口实例后销毁
+        let win = window.findWindow(key);
+        win.destroyWindow();
       } else if (op == 2) {
-        window.findWindow(key).then((win: window.Window) => {
-          win.setWindowTitle(title);
-        });
+        let win = window.findWindow(key);
+        win.setWindowTitle(title);
       } else if (op == 3) {
-        window.findWindow(key).then((win: window.Window) => {
-          win.moveWindowTo(a, b);
-          win.resize(c, d);
-        });
+        let win = window.findWindow(key);
+        win.moveWindowTo(a, b);
+        win.resize(c, d);
       } else if (op == 4) {
-        window.findWindow(key).then((win: window.Window) => {
-          if (a == 1) {
-            win.showWindow();
-          } else {
-            win.hideWindow();
-          }
-        });
+        let win = window.findWindow(key);
+        if (a == 1) {
+          win.showWindow();
+        } else {
+          // API 26：子窗口隐藏使用 minimize()（对子窗口语义为隐藏）
+          win.minimize();
+        }
       }
     } catch (e) {
       // 子窗口操作失败：忽略（引擎内窗口状态已记录）
@@ -429,7 +453,7 @@ struct Index {
 
   // 枚举全部输入设备，过滤 joystick（手柄）后回传引擎
   private enumerateGamepads(): void {
-    let deviceList: Array<Object> = [];
+    let deviceList: Array<GamepadInfo> = [];
     inputDevice.getDeviceList().then((ids: Array<number>) => {
       let jobs: Array<Promise<void>> = [];
       for (let i = 0; i < ids.length; i++) {
@@ -439,11 +463,12 @@ struct Index {
             // SourceType 为字符串类型：设备能力数组 sources 含 'joystick' 即为手柄
             let isJoystick = info.sources != undefined && info.sources.indexOf('joystick') >= 0;
             if (isJoystick) {
-              deviceList.push({
+              let gpad: GamepadInfo = {
                 id: deviceId,
                 name: info.name,
                 guid: 'ohos-' + deviceId + '-' + info.name.replace(/[^A-Za-z0-9]/g, '')
-              });
+              };
+              deviceList.push(gpad);
             }
             resolve();
           }).catch(() => {

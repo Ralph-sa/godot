@@ -1,0 +1,11 @@
+{
+  "modelVersion": "6.0.0",
+  "name": "godot_ohos",
+  "version": "1.0.0",
+  "description": "Godot Engine editor for HarmonyOS",
+  "main": "",
+  "author": "Godot",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}

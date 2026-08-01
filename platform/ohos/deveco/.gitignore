@@ -1,0 +1,24 @@
+# DevEco 工程忽略规则（Godot 鸿蒙平台）
+
+# hvigor 构建缓存与日志
+.hvigor/
+oh_modules/
+node_modules/
+.hvigor_output/
+
+# 模块构建产物
+entry/build/
+*.hap
+*.app
+
+# 预编译原生库（由 SCons 交叉编译后拷贝，不入库）
+entry/libs/
+
+# IDE 本地配置
+.idea/
+local.properties
+
+# 编译中间文件
+*.o
+*.a
+*.log
