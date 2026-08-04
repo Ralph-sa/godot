@@ -5314,12 +5314,23 @@ bool RenderingDeviceDriverVulkan::pipeline_cache_create(const Vector<uint8_t> &p
 		cache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
 		cache_info.initialDataSize = pipelines_cache.buffer.size() - sizeof(PipelineCacheHeader);
 #ifdef HARMONYOS_ENABLED
-		// HarmonyOS' x86_64 simulator translation driver attempts memcpy_s even
-		// when initialDataSize is zero. Vulkan requires pInitialData to be ignored
-		// in that case, but passing nullptr avoids the buggy marshaling path and
-		// leaves real cache data unchanged.
+#if defined(__x86_64__)
+		// The HarmonyOS x86_64 simulator's Vulkan translation driver has a
+		// marshaling bug for VkPipelineCacheCreateInfo: it runs memcpy_s on
+		// pInitialData unconditionally and fails on null sources (even with
+		// size 0), and may over-read past the supplied buffer. This corrupted
+		// the host heap on every run right after surface creation
+		// (Emulator.exe 0xc0000374). Disable cache data on the simulator and
+		// point pInitialData at a static buffer so the broken marshaling path
+		// can neither read out of bounds nor fail on null. Real devices
+		// (arm64) keep full pipeline caching.
+		cache_info.initialDataSize = 0;
+		static const uint8_t simulator_cache_data[4096] = { 0 };
+		cache_info.pInitialData = simulator_cache_data;
+#else
 		cache_info.pInitialData = cache_info.initialDataSize > 0 ?
 				pipelines_cache.buffer.ptr() + sizeof(PipelineCacheHeader) : nullptr;
+#endif
 #else
 		cache_info.pInitialData = pipelines_cache.buffer.ptr() + sizeof(PipelineCacheHeader);
 #endif

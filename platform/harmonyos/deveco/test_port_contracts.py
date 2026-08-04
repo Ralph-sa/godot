@@ -219,6 +219,8 @@ class HarmonyOSPortContracts(unittest.TestCase):
             "bool RenderingDeviceDriverVulkan::pipeline_cache_create",
         )
         self.assertIn("#ifdef HARMONYOS_ENABLED", pipeline_cache)
+        self.assertIn("__x86_64__", pipeline_cache)
+        self.assertIn("simulator_cache_data", pipeline_cache)
         self.assertIn("cache_info.initialDataSize > 0", pipeline_cache)
         self.assertIn(": nullptr", pipeline_cache)
 
