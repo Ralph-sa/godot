@@ -9,6 +9,8 @@ import os, sys, re, json
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.resolve()
+WORKSPACE_ROOT = PROJECT_ROOT.parents[3]
+BUILD_SCRIPT = WORKSPACE_ROOT / ".cursor/skills/harmonyos-tools/scripts/build_project.sh"
 PASS = 0; FAIL = 0
 
 def check(desc, condition):
@@ -42,9 +44,12 @@ def main():
     fe("entry/build-profile.json5"); fe("entry/hvigorfile.ts")
     fe("entry/src/main/module.json5")
     fc("entry/src/main/module.json5", r"EntryAbility", "EntryAbility defined")
-    fc("entry/src/main/module.json5", r"\"pc\"", "PC device type")
+    fc("entry/src/main/module.json5", r"\"2in1\"", "2in1 device type")
     fc("entry/src/main/module.json5", r"ArkTSPattern", "ArkTSPattern V2")
-    fc("entry/src/main/module.json5", r"nativeLib", "Native lib configured")
+    fc("entry/build-profile.json5", r"nativeLib", "Native lib configured")
+    fc("entry/build-profile.json5",
+       r'"abiFilters"\s*:\s*\[\s*"x86_64"\s*,\s*"arm64-v8a"\s*\]',
+       "Dual ABI filters: x86_64 + arm64-v8a")
     print()
 
     print("[3] ArkTS @ComponentV2")
@@ -62,8 +67,20 @@ def main():
     fe("entry/src/main/cpp/types/libgodot_napi/Index.d.ts")
     fc("entry/src/main/cpp/godot_napi_bridge.cpp", r"napi_module_register", "NAPI module register")
     fc("entry/src/main/cpp/godot_napi_bridge.cpp", r'dlopen\("libgodot\.so"', "dlopen libgodot.so")
+    bridge_text = (PROJECT_ROOT / "entry/src/main/cpp/godot_napi_bridge.cpp").read_text(
+        encoding="utf-8", errors="strict")
+    check("No ABI-specific libgodot fallback",
+          "libgodot.harmonyos.editor.arm64.so" not in bridge_text)
     fc("entry/src/main/cpp/CMakeLists.txt", r"libgodot_napi", "CMake target: libgodot_napi")
-    fc("entry/src/main/cpp/types/libgodot_napi/Index.d.ts", r"init.*number", "TS: init declared")
+    fc("entry/src/main/cpp/CMakeLists.txt", r"-g3", "NAPI debug symbols enabled")
+    fc("entry/build-profile.json5", r'"debugSymbol"\s*:\s*\{\s*"strip"\s*:\s*false',
+       "Hvigor native symbol stripping disabled")
+    fc("entry/src/main/cpp/types/libgodot_napi/Index.d.ts",
+       r"loadLibrary\s*:\s*\(projectPath:\s*string,\s*filesDir:\s*string,\s*"
+       r"cacheDir:\s*string,\s*tempDir:\s*string,\s*surfaceId:\s*string,\s*"
+       r"width:\s*number,\s*height:\s*number,\s*generation:\s*number\)\s*=>\s*number",
+       "TS: loadLibrary(projectPath, sandbox roots, surface) declared")
+    fe("test_port_contracts.py", "Focused HarmonyOS port contract tests")
     print()
 
     print("[5] Godot Platform Layer")
@@ -83,17 +100,18 @@ def main():
     fc(f"{platform}/detect.py", r"VULKAN_ENABLED", "VULKAN_ENABLED define")
     print()
 
-    print("[6] libgodot.so")
-    so = PROJECT_ROOT / "entry/libs/arm64-v8a/libgodot.so"
-    if so.is_file():
-        mb = so.stat().st_size / (1024 * 1024)
-        check(f"libgodot.so ({mb:.1f} MB)", True)
-        check("Size >= 5 MB", so.stat().st_size >= 5 * 1024 * 1024)
-        with open(so, "rb") as f:
-            magic = f.read(4)
-        check("Valid ELF magic (\\x7fELF)", magic == b"\x7fELF")
-    else:
-        check("libgodot.so exists", False)
+    print("[6] Configured ABI Artifacts")
+    for abi in ("x86_64", "arm64-v8a"):
+        so = PROJECT_ROOT / f"entry/libs/{abi}/libgodot.so"
+        if so.is_file():
+            mb = so.stat().st_size / (1024 * 1024)
+            check(f"{abi} libgodot.so ({mb:.1f} MB)", True)
+            check(f"{abi} size >= 5 MB", so.stat().st_size >= 5 * 1024 * 1024)
+            with open(so, "rb") as f:
+                magic = f.read(4)
+            check(f"{abi} valid ELF magic", magic == b"\x7fELF")
+        else:
+            print(f"  [INFO] {abi} libgodot.so not built during static validation")
     print()
 
     print("[7] Resources & Scripts")
@@ -101,6 +119,31 @@ def main():
     fe("entry/src/main/resources/base/element/string.json")
     fe("build_harmonyos.sh"); fe("test_env.sh")
     fc("entry/src/main/resources/base/profile/main_pages.json", r"GodotEditorPage", "Page in main_pages.json")
+    check("Dual ABI build wrapper exists", BUILD_SCRIPT.is_file())
+    if BUILD_SCRIPT.is_file():
+        build_script = BUILD_SCRIPT.read_text(encoding="utf-8", errors="strict")
+        check("--arch all is documented", "--arch <arm64|x86_64|all>" in build_script)
+        check("--arch all selects both SCons architectures",
+              'TARGET_ARCHES=("x86_64" "arm64")' in build_script)
+        check("Single-architecture mode remains available",
+              'arm64|x86_64) TARGET_ARCHES=("$ARCH")' in build_script)
+        check("arm64 output maps to arm64-v8a",
+              'arm64)  libs_arch_dir="arm64-v8a"' in build_script)
+        check("x86_64 output maps to x86_64",
+              'x86_64) libs_arch_dir="x86_64"' in build_script)
+        check("Architectures build sequentially",
+              'for target_arch in "${TARGET_ARCHES[@]}"' in build_script)
+        check("Each ABI copies ABI-local libgodot.so",
+              'cp "$godot_so" "$libs_dir/libgodot.so"' in build_script)
+        check("Git Bash restores PROCESSOR_ARCHITECTURE",
+              "PROCESSOR_ARCHITECTURE=AMD64" in build_script)
+        check("Packaged engine is stripped by default",
+              '"$ENGINE_STRIP_TOOL" --strip-all -o "$libs_dir/libgodot.so" "$godot_so"'
+              in build_script)
+        check("Full engine symbols remain an explicit opt-in",
+              "--keep-engine-symbols" in build_script)
+        check("HAP packaging runs exactly once",
+              build_script.count('./build_hap_only.bat "$BUILD_TYPE"') == 1)
     print()
 
     print("=" * 60)

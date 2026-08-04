@@ -29,6 +29,15 @@ target_compile_options(godot_napi PRIVATE
     -Wno-unused-parameter
     -fexceptions
     -frtti
+    -O0
+    -g3
+    -fno-omit-frame-pointer
+)
+
+# Keep a stable ELF build-id so crash reports can be matched to the exact
+# unstripped libgodot_napi.so archived from the HAP.
+target_link_options(godot_napi PRIVATE
+    -Wl,--build-id=sha1
 )
 
 # C++17 for smart pointers

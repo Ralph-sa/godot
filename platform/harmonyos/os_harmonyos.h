@@ -28,8 +28,9 @@ class JoypadHarmonyOS;
 // NOT because Android does the same.
 class OS_HarmonyOS : public OS_Unix {
 private:
-	mutable String data_dir_cache;
-	mutable String cache_dir_cache;
+	String data_path_root;
+	String cache_path_root;
+	String temp_path_root;
 
 	MainLoop *main_loop = nullptr;
 	JoypadHarmonyOS *joypad_harmonyos = nullptr;
@@ -38,9 +39,12 @@ private:
 	virtual void delete_main_loop() override;
 
 public:
+	Error configure_sandbox_paths(const String &p_files_dir, const String &p_cache_dir, const String &p_temp_dir);
+
 	virtual String get_name() const override;
 	virtual String get_user_data_dir(const String &p_user_dir) const override;
 	virtual String get_cache_path() const override;
+	virtual String get_temp_path() const override;
 
 	virtual String get_config_path() const override;
 	virtual String get_data_path() const override;

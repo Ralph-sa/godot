@@ -1,5 +1,7 @@
 {
   "app": {
+    // AGC HarmonyOS material is injected by hvigorfile.ts from signing.local.json.
+    // OpenHarmony local material is applied after unsigned HAP packaging.
     "signingConfigs": [],
     "products": [
       {
@@ -7,7 +9,21 @@
         "bundleName": "com.godotengine.editor",
         "compatibleSdkVersion": "6.1.1(24)",
         "runtimeOS": "HarmonyOS",
-        "targetSdkVersion": "6.1.1(24)"
+        "targetSdkVersion": "6.1.1(24)",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": false
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
       }
     ]
   },

@@ -11,33 +11,30 @@
 HarmonyOSNativeWindow *HarmonyOSNativeWindow::singleton = nullptr;
 
 bool HarmonyOSNativeWindow::initialize_with_xcomponent(OH_NativeXComponent *p_xcomponent) {
-	native_xcomponent_ = p_xcomponent;
-
-	if (!native_xcomponent_) {
+	if (!p_xcomponent) {
 		OH_LOG_ERROR(LOG_APP, "Invalid XComponent pointer");
 		return false;
 	}
 
-	// Register callbacks
-	OH_NativeXComponent_Callback callback;
-	callback.OnSurfaceCreated = OnSurfaceCreated_CB;
-	callback.OnSurfaceChanged = OnSurfaceChanged_CB;
-	callback.OnSurfaceDestroyed = OnSurfaceDestroyed_CB;
-	callback.DispatchTouchEvent = DispatchTouchEvent_CB;
-
-	OH_NativeXComponent_RegisterCallback(native_xcomponent_, &callback);
-
+	// Surface ownership intentionally stays on the numeric surface-id path.
+	// Registering OH_NativeXComponent lifecycle callbacks here would introduce
+	// a second OHNativeWindow source and let an old callback overwrite the
+	// current handle. The native XComponent is used only for input events that
+	// ArkTS cannot expose with a real delta.
+	//
 	// The mouse wheel does not surface through ArkTS onMouse, and ArkTS
 	// AxisEvent only exposes the step configuration rather than the actual
 	// scroll delta. The native axis callback is the only path that carries
 	// both direction and magnitude.
 	int32_t axis_ret = OH_NativeXComponent_RegisterUIInputEventCallback(
-			native_xcomponent_, DispatchAxisEvent_CB, ARKUI_UIINPUTEVENT_TYPE_AXIS);
+			p_xcomponent, DispatchAxisEvent_CB, ARKUI_UIINPUTEVENT_TYPE_AXIS);
 	if (axis_ret != 0) {
 		OH_LOG_WARN(LOG_APP, "Axis event callback registration failed (ret=%{public}d), mouse wheel will not work",
 				axis_ret);
+		return false;
 	}
 
+	native_xcomponent_ = p_xcomponent;
 	OH_LOG_INFO(LOG_APP, "XComponent initialized with native handle");
 	return true;
 }
@@ -67,7 +64,13 @@ void HarmonyOSNativeWindow::DispatchAxisEvent_CB(OH_NativeXComponent *component,
 	HarmonyOSInput::process_mouse_scroll_event(x, y, horizontal, vertical);
 }
 
-bool HarmonyOSNativeWindow::initialize_with_surface_id(uint64_t p_surface_id) {
+bool HarmonyOSNativeWindow::initialize_with_surface_id(uint64_t p_surface_id, uint64_t p_width, uint64_t p_height) {
+	if (p_surface_id == 0 || p_width == 0 || p_height == 0) {
+		OH_LOG_ERROR(LOG_APP, "[XComponent] Invalid surface metadata id=%{public}llu size=%{public}llux%{public}llu",
+				(unsigned long long)p_surface_id, (unsigned long long)p_width, (unsigned long long)p_height);
+		return false;
+	}
+
 	if (native_window_) {
 		OH_NativeWindow_DestroyNativeWindow(native_window_);
 		native_window_ = nullptr;
@@ -81,10 +84,20 @@ bool HarmonyOSNativeWindow::initialize_with_surface_id(uint64_t p_surface_id) {
 		return false;
 	}
 
+	width_ = p_width;
+	height_ = p_height;
 	surface_ready_ = true;
-	OH_LOG_INFO(LOG_APP, "[XComponent] native window created from surface id: %{public}llu",
-			(unsigned long long)p_surface_id);
+	OH_LOG_INFO(LOG_APP, "[XComponent] native window created from surface id: %{public}llu size=%{public}llux%{public}llu",
+			(unsigned long long)p_surface_id, (unsigned long long)width_, (unsigned long long)height_);
 	return true;
+}
+
+void HarmonyOSNativeWindow::update_surface_size(uint64_t p_width, uint64_t p_height) {
+	if (p_width == 0 || p_height == 0) {
+		return;
+	}
+	width_ = p_width;
+	height_ = p_height;
 }
 
 void HarmonyOSNativeWindow::destroy() {
@@ -95,78 +108,6 @@ void HarmonyOSNativeWindow::destroy() {
 	native_xcomponent_ = nullptr;
 	surface_ready_ = false;
 	OH_LOG_INFO(LOG_APP, "XComponent destroyed");
-}
-
-void HarmonyOSNativeWindow::OnSurfaceCreated_CB(OH_NativeXComponent *component, void *window) {
-	OH_LOG_INFO(LOG_APP, "[XComponent] OnSurfaceCreated_CB entry window=%{public}p", window);
-	if (!singleton || !window) {
-		OH_LOG_WARN(LOG_APP, "[XComponent] OnSurfaceCreated_CB ignored (singleton=%{public}p window=%{public}p)",
-				(void *)singleton, window);
-		return;
-	}
-
-	OH_LOG_INFO(LOG_APP, "OnSurfaceCreated_CB");
-
-	singleton->native_window_ = static_cast<OHNativeWindow *>(window);
-
-	// Get initial dimensions
-	uint64_t w = 0, h = 0;
-	int32_t ret = OH_NativeXComponent_GetXComponentSize(component, window, &w, &h);
-	OH_LOG_INFO(LOG_APP, "[XComponent] OnSurfaceCreated_CB size ret=%{public}d w=%{public}llu h=%{public}llu",
-			(int)ret, (unsigned long long)w, (unsigned long long)h);
-	if (ret == 0) {
-		singleton->width_ = w;
-		singleton->height_ = h;
-
-		// Forward dimensions to DisplayServer so window_size / rect_changed
-		// callbacks reflect the real surface geometry.
-		DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
-		if (ds) {
-			ds->update_window_size((int)w, (int)h);
-		}
-	}
-
-	singleton->surface_ready_ = true;
-
-	OH_LOG_INFO(LOG_APP, "[XComponent] surface ready: %{public}llux%{public}llu",
-		(unsigned long long)singleton->width_,
-		(unsigned long long)singleton->height_);
-}
-
-void HarmonyOSNativeWindow::OnSurfaceChanged_CB(OH_NativeXComponent *component, void *window) {
-	if (!singleton || !window) {
-		return;
-	}
-
-	uint64_t w = 0, h = 0;
-	OH_NativeXComponent_GetXComponentSize(component, window, &w, &h);
-	singleton->width_ = w;
-	singleton->height_ = h;
-	OH_LOG_INFO(LOG_APP, "[XComponent] OnSurfaceChanged_CB: %{public}llux%{public}llu",
-			(unsigned long long)w, (unsigned long long)h);
-
-	// Forward size change to DisplayServer.
-	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
-	if (ds) {
-		ds->update_window_size((int)w, (int)h);
-	}
-
-	OH_LOG_INFO(LOG_APP, "Surface changed: %{public}llux%{public}llu",
-		(unsigned long long)w, (unsigned long long)h);
-}
-
-void HarmonyOSNativeWindow::OnSurfaceDestroyed_CB(OH_NativeXComponent *component, void *window) {
-	if (!singleton) {
-		return;
-	}
-
-	OH_LOG_INFO(LOG_APP, "OnSurfaceDestroyed_CB");
-	singleton->surface_ready_ = false;
-	singleton->native_window_ = nullptr;
-}
-
-void HarmonyOSNativeWindow::DispatchTouchEvent_CB(OH_NativeXComponent *component, void *window) {
-	// Touch events handled via ArkTS layer for better integration
 }
 
 #endif // HARMONYOS_ENABLED

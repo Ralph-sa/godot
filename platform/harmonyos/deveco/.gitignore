@@ -5,6 +5,7 @@ entry/libs/
 .hvigor/
 entry/build/
 entry/.cxx/
+entry/src/main/cpp/build/
 
 # Node modules / hvigor tools
 node_modules/
@@ -13,6 +14,8 @@ oh_modules/
 
 # Local machine config
 local.properties
+signing.local.json
+.signing/
 
 # IDE
 .idea/

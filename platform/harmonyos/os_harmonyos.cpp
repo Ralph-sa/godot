@@ -26,35 +26,58 @@ String OS_HarmonyOS::get_name() const {
 	return "HarmonyOS";
 }
 
-String OS_HarmonyOS::get_user_data_dir(const String &p_user_dir) const {
-	if (!data_dir_cache.is_empty()) {
-		return data_dir_cache;
+static String _normalize_sandbox_root(const String &p_path) {
+	String normalized = p_path.simplify_path();
+	while (normalized.length() > 1 && normalized.ends_with("/")) {
+		normalized = normalized.trim_suffix("/");
 	}
+	return normalized;
+}
 
-	if (!p_user_dir.is_empty()) {
-		data_dir_cache = p_user_dir;
-	} else {
-		// OHOS sandbox path for user data — uses module name from os_harmonyos.h
-		data_dir_cache = String(OHOS_DATA_BASE) + "/" + OHOS_MODULE_NAME + "/files";
+static bool _is_valid_sandbox_root(const String &p_path) {
+	return p_path.is_absolute_path() &&
+			(p_path == "/data/storage" || p_path.begins_with("/data/storage/"));
+}
+
+Error OS_HarmonyOS::configure_sandbox_paths(const String &p_files_dir, const String &p_cache_dir, const String &p_temp_dir) {
+	const String files_dir = _normalize_sandbox_root(p_files_dir);
+	const String cache_dir = _normalize_sandbox_root(p_cache_dir);
+	const String temp_dir = _normalize_sandbox_root(p_temp_dir);
+	if (!_is_valid_sandbox_root(files_dir) || !_is_valid_sandbox_root(cache_dir) || !_is_valid_sandbox_root(temp_dir)) {
+		OH_LOG_ERROR(LOG_APP, "Invalid sandbox roots: files=%{public}s cache=%{public}s temp=%{public}s",
+				files_dir.utf8().get_data(), cache_dir.utf8().get_data(), temp_dir.utf8().get_data());
+		return ERR_INVALID_PARAMETER;
 	}
-	return data_dir_cache;
+	data_path_root = files_dir;
+	cache_path_root = cache_dir;
+	temp_path_root = temp_dir;
+	DirAccessHarmonyOS::configure_sandbox_roots(data_path_root, cache_path_root, temp_path_root);
+	OH_LOG_INFO(LOG_APP, "Sandbox configured: files=%{public}s cache=%{public}s temp=%{public}s",
+			data_path_root.utf8().get_data(), cache_path_root.utf8().get_data(), temp_path_root.utf8().get_data());
+	return OK;
+}
+
+String OS_HarmonyOS::get_user_data_dir(const String &p_user_dir) const {
+	return p_user_dir.is_empty() ? get_data_path() : get_data_path().path_join(p_user_dir);
 }
 
 String OS_HarmonyOS::get_cache_path() const {
-	if (!cache_dir_cache.is_empty()) {
-		return cache_dir_cache;
-	}
+	return cache_path_root.is_empty() ?
+			String(OHOS_DATA_BASE) + "/" + OHOS_MODULE_NAME + "/cache" : cache_path_root;
+}
 
-	cache_dir_cache = String(OHOS_DATA_BASE) + "/" + OHOS_MODULE_NAME + "/cache";
-	return cache_dir_cache;
+String OS_HarmonyOS::get_temp_path() const {
+	return temp_path_root.is_empty() ?
+			String(OHOS_DATA_BASE) + "/" + OHOS_MODULE_NAME + "/temp" : temp_path_root;
 }
 
 String OS_HarmonyOS::get_config_path() const {
-	return get_user_data_dir("").path_join("config");
+	return get_data_path();
 }
 
 String OS_HarmonyOS::get_data_path() const {
-	return get_user_data_dir("").path_join("data");
+	return data_path_root.is_empty() ?
+			String(OHOS_DATA_BASE) + "/" + OHOS_MODULE_NAME + "/files" : data_path_root;
 }
 
 void OS_HarmonyOS::set_main_loop(MainLoop *p_main_loop) {

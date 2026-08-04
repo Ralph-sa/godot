@@ -1,0 +1,13 @@
+{
+  "name": "localHarmonyOS",
+  "type": "HarmonyOS",
+  "material": {
+    "storeFile": "C:\\path\\to\\application.p12",
+    "storePassword": "generated-encrypted-value",
+    "keyAlias": "application-key-alias",
+    "keyPassword": "generated-encrypted-value",
+    "signAlg": "SHA256withECDSA",
+    "profile": "C:\\path\\to\\profile.p7b",
+    "certpath": "C:\\path\\to\\application.cer"
+  }
+}

@@ -22,6 +22,10 @@ if not defined DEVECO_SDK_HOME (
 if not defined JAVA_HOME (
     set "JAVA_HOME=C:\Program Files\Huawei\DevEco Studio\jbr"
 )
+if not defined NODE_HOME (
+    set "NODE_HOME=C:\Program Files\Huawei\DevEco Studio\tools\node"
+)
+set "PATH=%NODE_HOME%;%JAVA_HOME%\bin;%PATH%"
 
 call hvigorw.bat assembleHap --mode module -p product=default -p buildMode=%BUILD_MODE% --no-daemon
 exit /b %ERRORLEVEL%

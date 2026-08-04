@@ -472,15 +472,14 @@ void process_input_text(const char *text) {
 		return;
 	}
 
-	Ref<InputEventKey> key_event;
-	key_event.instantiate();
-	key_event->set_pressed(true);
-	key_event->set_keycode(Key::NONE);
-	key_event->set_physical_keycode(Key::NONE);
-	key_event->set_key_label(Key::NONE);
-
 	for (int i = 0; i < decoded.length(); i++) {
 		char32_t unicode = decoded.unicode_at(i);
+		Ref<InputEventKey> key_event;
+		key_event.instantiate();
+		key_event->set_pressed(true);
+		key_event->set_echo(false);
+		key_event->set_keycode(Key::NONE);
+		key_event->set_physical_keycode(Key::NONE);
 		key_event->set_key_label(Key(unicode));
 		key_event->set_unicode(unicode);
 		Input::get_singleton()->parse_input_event(key_event);

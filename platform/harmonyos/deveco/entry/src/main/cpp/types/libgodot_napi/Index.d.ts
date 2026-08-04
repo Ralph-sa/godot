@@ -2,22 +2,41 @@
  * NAPI TypeScript declarations for Godot Engine bridge
  */
 export const godot_napi: {
-  /** Initialize the Godot engine. Returns 0 on success. */
-  init: () => number;
+  /** Atomically rename one staging project directory under filesDir/projects.
+   * Both names are validated native leaf names. The destination is never replaced.
+   */
+  commitProjectImport: (filesDir: string, stagingLeaf: string, destinationLeaf: string) => number;
+
+  /** Recursively remove one staging project directory without following symlinks. */
+  cleanupProjectImport: (filesDir: string, stagingLeaf: string) => number;
+
+  /** Start asynchronous loading after a valid XComponent surface exists.
+   * The project path must be an app-sandbox filesystem path containing
+   * project.godot. Sandbox roots come from UIAbilityContext; surface
+   * dimensions are physical pixels.
+   */
+  loadLibrary: (projectPath: string, filesDir: string, cacheDir: string, tempDir: string,
+    surfaceId: string, width: number, height: number, generation: number) => number;
+
+  /** Poll asynchronous setup. Returns 1=ready, 0=loading, -1=failed. */
+  isLibraryLoaded: () => number;
+
+  /** Return the setup result after isLibraryLoaded reports ready. */
+  startEngine: () => number;
 
   /** Cleanup the Godot engine. Returns 0 on success. */
   cleanup: () => number;
 
   /** Notify engine that rendering surface was created. */
-  onSurfaceCreated: (surfaceId: string, width?: number, height?: number) => number;
+  onSurfaceCreated: (surfaceId: string, width: number, height: number, generation: number) => number;
 
-  /** Initialize the native XComponent from the onLoad context object.
-   * Must be called before onSurfaceCreated.
+  /** Capture the XComponent.onLoad context and update engine input registration.
+   * Must succeed before the surface is reported ready.
    */
   initXComponent: (context: object) => number;
 
   /** Notify engine that rendering surface was destroyed. */
-  onSurfaceDestroy: () => number;
+  onSurfaceDestroy: (surfaceId: string, generation: number) => number;
 
   /** Send a keyboard event to the engine.
    * @param keyCode OHOS key code
@@ -29,10 +48,10 @@ export const godot_napi: {
   /** Send a mouse event to the engine.
    * @param button Mouse button index
    * @param action 0=press, 1=release, 2=move
-   * @param x X position in surface coordinates
-   * @param y Y position in surface coordinates
-   * @param offsetX Scroll offset X
-   * @param offsetY Scroll offset Y
+   * @param x X position in physical pixels
+   * @param y Y position in physical pixels
+   * @param offsetX Relative motion in physical pixels
+   * @param offsetY Relative motion in physical pixels
    */
   sendMouseEvent: (button: number, action: number, x: number, y: number,
     offsetX: number, offsetY: number) => number;
@@ -40,8 +59,8 @@ export const godot_napi: {
   /** Send a touch event to the engine.
    * @param touchId Touch point index
    * @param action 0=down, 1=up, 2=move
-   * @param x X position in surface coordinates
-   * @param y Y position in surface coordinates
+   * @param x X position in physical pixels
+   * @param y Y position in physical pixels
    */
   sendTouchEvent: (touchId: number, action: number, x: number, y: number) => number;
 
@@ -49,6 +68,9 @@ export const godot_napi: {
   * @param text The input text string
   */
   sendInputText: (text: string) => number;
+
+  /** Update IME preview/composition text and selection. */
+  sendImeUpdate: (text: string, selectionStart: number, selectionLength: number) => number;
 
   /** Notify engine that app is going to background (pause). */
   onPause: () => number;

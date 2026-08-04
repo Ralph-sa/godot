@@ -17,17 +17,31 @@ export class GodotEditorVM {
   @Trace statusMessage: string = 'Initializing engine...';
   @Trace surfaceCreated: boolean = false;
   @Trace projectPath: string = '';
+  private pendingSurfaceId: string = '';
+  private pendingSurfaceWidth: number = 0;
+  private pendingSurfaceHeight: number = 0;
+  private pendingSurfaceGeneration: number = 0;
 
-  async initEngine(path: string): Promise<void> {
+  async initEngine(path: string, filesDir: string, cacheDir: string, tempDir: string,
+    surfaceId: string, width: number, height: number, generation: number): Promise<void> {
     this.projectPath = path;
     this.statusMessage = 'Loading project...';
     this.isLoading = true;
 
-    hilog.info(DOMAIN, TAG, '[INIT STEP 4/16] initEngine called, project: ' + path);
+    if (path.length === 0 || filesDir.length === 0 || cacheDir.length === 0 || tempDir.length === 0 ||
+      surfaceId.length === 0 || width <= 0 || height <= 0 || generation <= 0) {
+      this.isLoading = false;
+      this.statusMessage = 'Invalid project or surface';
+      hilog.error(DOMAIN, TAG, `Invalid engine init arguments: path=${path} files=${filesDir} surface=${surfaceId} ${width}x${height}`);
+      return;
+    }
+
+    hilog.info(DOMAIN, TAG, `[INIT STEP 5/17] initEngine project=${path} surface=${surfaceId} ${width}x${height}`);
     try {
-      hilog.info(DOMAIN, TAG, '[INIT STEP 5/16] calling godot_napi.loadLibrary()');
-      let loadResult: number = godot_napi.loadLibrary();
-      hilog.info(DOMAIN, TAG, '[INIT STEP 5/16] loadLibrary returned: ' + loadResult);
+      hilog.info(DOMAIN, TAG, '[INIT STEP 6/17] calling godot_napi.loadLibrary with sandbox roots and surface');
+      let loadResult: number = godot_napi.loadLibrary(path, filesDir, cacheDir, tempDir,
+        surfaceId, width, height, generation);
+      hilog.info(DOMAIN, TAG, '[INIT STEP 6/17] loadLibrary returned: ' + loadResult);
 
       if (loadResult !== 0) {
         this.isLoading = false;
@@ -63,6 +77,14 @@ export class GodotEditorVM {
         this.isLoading = false;
         this.statusMessage = 'Engine ready';
         hilog.info(DOMAIN, TAG, '[INIT STEP 15/16] Engine OK — switching to GodotSurface');
+        if (this.pendingSurfaceGeneration > 0) {
+          this.forwardSurfaceCreated(this.pendingSurfaceId, this.pendingSurfaceWidth,
+            this.pendingSurfaceHeight, this.pendingSurfaceGeneration);
+          this.pendingSurfaceId = '';
+          this.pendingSurfaceWidth = 0;
+          this.pendingSurfaceHeight = 0;
+          this.pendingSurfaceGeneration = 0;
+        }
       } else {
         this.isLoading = false;
         this.statusMessage = 'Engine init failed: ' + result;
@@ -75,12 +97,48 @@ export class GodotEditorVM {
     }
   }
 
+  private forwardSurfaceCreated(surfaceId: string, width: number, height: number,
+    generation: number): void {
+    try {
+      let result: number = godot_napi.onSurfaceCreated(surfaceId, width, height, generation);
+      this.surfaceCreated = result === 0;
+      hilog.info(DOMAIN, TAG,
+        `Surface forwarded: ${surfaceId} generation=${generation} ${width}x${height}, result=${result}`);
+    } catch (e) {
+      this.surfaceCreated = false;
+      hilog.error(DOMAIN, TAG, 'NAPI recreated surface error: ' + e);
+    }
+  }
+
+  onSurfaceCreated(surfaceId: string, width: number, height: number, generation: number): void {
+    if (surfaceId.length === 0 || width <= 0 || height <= 0 || generation <= 0) {
+      hilog.error(DOMAIN, TAG, 'Ignoring invalid recreated surface');
+      return;
+    }
+
+    if (!this.isEngineReady) {
+      this.pendingSurfaceId = surfaceId;
+      this.pendingSurfaceWidth = width;
+      this.pendingSurfaceHeight = height;
+      this.pendingSurfaceGeneration = generation;
+      hilog.info(DOMAIN, TAG,
+        `Surface update deferred until engine ready: ${surfaceId} generation=${generation} ${width}x${height}`);
+      return;
+    }
+
+    this.forwardSurfaceCreated(surfaceId, width, height, generation);
+  }
+
   cleanupEngine(): void {
     hilog.info(DOMAIN, TAG, 'Cleaning up Godot engine...');
     try {
-      godot_napi.cleanup();
-      this.isEngineReady = false;
-      this.surfaceCreated = false;
+      let cleanupResult: number = godot_napi.cleanup();
+      if (cleanupResult === 0) {
+        this.isEngineReady = false;
+        this.surfaceCreated = false;
+      } else {
+        hilog.error(DOMAIN, TAG, 'NAPI cleanup request rejected: ' + cleanupResult);
+      }
     } catch (e) {
       hilog.error(DOMAIN, TAG, 'NAPI cleanup error: ' + e);
     }

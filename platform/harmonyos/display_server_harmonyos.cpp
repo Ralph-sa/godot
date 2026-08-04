@@ -23,12 +23,21 @@
 #endif
 
 #include <atomic>
+#include <cstring>
 #include <dlfcn.h>
 #include <window_manager/oh_display_info.h>
 #include <window_manager/oh_display_manager.h>
 
+using HarmonyOSWindowTitleCallback = void (*)(const char *);
+
 static std::atomic<RenderingContextDriver *> rendering_context_global(nullptr);
 static std::atomic<bool> rendering_context_global_checked(false);
+static std::atomic<HarmonyOSWindowTitleCallback> window_title_callback(nullptr);
+
+extern "C" __attribute__((visibility("default"))) void harmonyos_set_window_title_callback(
+		HarmonyOSWindowTitleCallback p_callback) {
+	window_title_callback.store(p_callback, std::memory_order_release);
+}
 
 DisplayServerHarmonyOS *DisplayServerHarmonyOS::get_singleton() {
 	return static_cast<DisplayServerHarmonyOS *>(DisplayServer::get_singleton());
@@ -138,7 +147,13 @@ String DisplayServerHarmonyOS::clipboard_get() const {
 			char *data = nullptr;
 			size_t len = 0;
 			if (s_pasteboard_get_data(pasteboard, &data, &len) == 0 && data && len > 0) {
-				String result = String::utf8(data, len);
+				// HarmonyOS pasteboard implementations may include the terminating
+				// NUL (or unused capacity after it) in `len`. Godot's explicit-length
+				// UTF-8 parser treats NUL as text and emits U+FFFD, so clamp to the
+				// first terminator before crossing the platform boundary.
+				const void *terminator = memchr(data, '\0', len);
+				size_t text_len = terminator ? static_cast<const char *>(terminator) - data : len;
+				String result = text_len > 0 ? String::utf8(data, (int)text_len) : String();
 				s_pasteboard_destroy(pasteboard);
 				return result;
 			}
@@ -300,12 +315,11 @@ ObjectID DisplayServerHarmonyOS::window_get_attached_instance_id(DisplayServerEn
 
 void DisplayServerHarmonyOS::window_set_title(const String &p_title, DisplayServerEnums::WindowID p_window) {
 	// Forward title change to ArkTS via NAPI callback.
-	// The actual callback is registered from ArkTS at runtime.
-	// We use a weak symbol so linking succeeds even when libgodot.so
-	// is built standalone without the NAPI bridge.
-	extern void harmonyos_notify_window_title(const char *title) __attribute__((weak));
-	if (harmonyos_notify_window_title) {
-		harmonyos_notify_window_title(p_title.utf8().get_data());
+	// The NAPI bridge installs this explicitly after dlopen/dlsym, avoiding
+	// any dependency on weak-symbol resolution or loader visibility.
+	HarmonyOSWindowTitleCallback callback = window_title_callback.load(std::memory_order_acquire);
+	if (callback) {
+		callback(p_title.utf8().get_data());
 	}
 }
 
@@ -346,6 +360,12 @@ Size2i DisplayServerHarmonyOS::window_get_min_size(DisplayServerEnums::WindowID 
 
 void DisplayServerHarmonyOS::window_set_size(const Size2i p_size, DisplayServerEnums::WindowID p_window) {
 	set_window_size(p_size);
+#ifdef VULKAN_ENABLED
+	RenderingContextDriver *ctx = rendering_context_global.load(std::memory_order_acquire);
+	if (rendering_window_created && ctx) {
+		ctx->window_set_size(p_window, p_size.width, p_size.height);
+	}
+#endif
 }
 
 Size2i DisplayServerHarmonyOS::window_get_size(DisplayServerEnums::WindowID p_window) const {
@@ -371,8 +391,8 @@ void DisplayServerHarmonyOS::window_set_mode(DisplayServerEnums::WindowMode p_mo
 	// This used to forward through a weak-declared harmonyos_notify_window_mode,
 	// but that symbol has no definition anywhere in the repository, so the null
 	// check was always false and the branch never ran. Keeping it only made the
-	// path look wired up. Contrast harmonyos_notify_window_title, which is
-	// genuinely defined in the NAPI bridge and does work.
+	// path look wired up. Window-title forwarding instead uses an explicitly
+	// installed callback whose registration is validated by the NAPI bridge.
 	_window_mode = p_mode;
 }
 
@@ -517,6 +537,16 @@ void DisplayServerHarmonyOS::update_window_size(int p_width, int p_height) {
 	set_window_size(Size2i(p_width, p_height));
 	_window_position = Point2i(0, 0);
 
+#ifdef VULKAN_ENABLED
+	// Mirrors the WM_SIZE path in DisplayServerWindows. Updating only the
+	// DisplayServer members leaves the Vulkan surface and swapchain at their
+	// previous dimensions when a 2-in-1 window is resized.
+	RenderingContextDriver *ctx = rendering_context_global.load(std::memory_order_acquire);
+	if (rendering_window_created && ctx) {
+		ctx->window_set_size(DisplayServerEnums::MAIN_WINDOW_ID, p_width, p_height);
+	}
+#endif
+
 	// Folding, rotating or moving to another display all change density and
 	// refresh rate, and all of them resize the surface first — so this is the
 	// point where stale metrics can be refreshed without a change listener.
@@ -592,64 +622,88 @@ void DisplayServerHarmonyOS::free_vulkan_global_context() {
 	}
 }
 
-void DisplayServerHarmonyOS::reset_window() {
-	OH_LOG_INFO(LOG_APP, "[DS] reset_window entry");
+void DisplayServerHarmonyOS::release_rendering_window() {
+	window_can_draw_val.store(false, std::memory_order_release);
+	if (!rendering_window_created) {
+		return;
+	}
+
+	// Match DisplayServerWindows::_delete_window(): the swapchain owned by the
+	// RenderingDevice must be released before the platform window held by the
+	// RenderingContextDriver. OHNativeWindow is released by harmonyos_main only
+	// after this method returns on the engine thread.
+	if (rendering_device) {
+		rendering_device->screen_free(DisplayServerEnums::MAIN_WINDOW_ID);
+	}
+
 	RenderingContextDriver *ctx = rendering_context_global.load(std::memory_order_acquire);
 	if (ctx) {
-		DisplayServerEnums::VSyncMode last_vsync_mode = ctx->window_get_vsync_mode(window_id);
-		ctx->window_destroy(window_id);
-
-		HarmonyOSNativeWindow *native_win = HarmonyOSNativeWindow::singleton;
-		if (!native_win) {
-			OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: no HarmonyOSNativeWindow");
-			return;
-		}
-
-		OHNativeWindow *oh_window = native_win->get_native_window();
-		if (!oh_window) {
-			OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: OHNativeWindow is NULL");
-			return;
-		}
-		OH_LOG_INFO(LOG_APP, "[DS] reset_window: OHNativeWindow=%{public}p size=%{public}dx%{public}d",
-				(void *)oh_window, get_window_size().width, get_window_size().height);
-
-		// WindowPlatformData only carries the native window: surface_create()
-		// passes it straight to vkCreateSurfaceOHOS, which derives the extent
-		// from the window itself. The size is handed over separately via
-		// window_set_size() below, same as DisplayServerWindows does.
-		RenderingContextDriverVulkanHarmonyOS::WindowPlatformData wpd;
-		wpd.native_window = oh_window;
-
-		if (ctx->window_create(window_id, &wpd) != OK) {
-			ERR_PRINT("Failed to reset Vulkan window.");
-			OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: window_create error");
-			return;
-		}
-		OH_LOG_INFO(LOG_APP, "[DS] reset_window: window_create OK");
-
-		ctx->window_set_size(window_id, get_window_size().width, get_window_size().height);
-		ctx->window_set_vsync_mode(window_id, last_vsync_mode);
-
-		// Create the swap chain for the main window now that the native surface
-		// (OHNativeWindow from the XComponent) is available. The RenderingDevice
-		// was initialized earlier (in the constructor) without a window, so this
-		// is deferred to the surface-created callback.
-		if (rendering_device != nullptr) {
-			Error err = rendering_device->screen_create(DisplayServerEnums::MAIN_WINDOW_ID);
-			if (err != OK) {
-				ERR_PRINT("Failed to create Vulkan swap chain for main window.");
-				OH_LOG_ERROR(LOG_APP, "[DS] reset_window: screen_create FAILED err=%{public}d", (int)err);
-			} else {
-				OH_LOG_INFO(LOG_APP, "[DS] reset_window: screen_create OK, swapchain size=%{public}dx%{public}d",
-						rendering_device->screen_get_width(DisplayServerEnums::MAIN_WINDOW_ID),
-						rendering_device->screen_get_height(DisplayServerEnums::MAIN_WINDOW_ID));
-			}
-		} else {
-			OH_LOG_ERROR(LOG_APP, "[DS] reset_window: rendering_device is NULL");
-		}
-	} else {
-		OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: Vulkan context not initialized, cannot create window surface");
+		ctx->window_destroy(DisplayServerEnums::MAIN_WINDOW_ID);
 	}
+
+	rendering_window_created = false;
+	OH_LOG_INFO(LOG_APP, "[DS] rendering window released on engine thread");
+}
+
+bool DisplayServerHarmonyOS::reset_window() {
+	OH_LOG_INFO(LOG_APP, "[DS] reset_window entry");
+	RenderingContextDriver *ctx = rendering_context_global.load(std::memory_order_acquire);
+	if (!ctx) {
+		OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: Vulkan context not initialized, cannot create window surface");
+		return false;
+	}
+
+	DisplayServerEnums::VSyncMode last_vsync_mode = DisplayServerEnums::VSyncMode::VSYNC_ENABLED;
+	if (rendering_window_created) {
+		last_vsync_mode = ctx->window_get_vsync_mode(window_id);
+	}
+	release_rendering_window();
+
+	HarmonyOSNativeWindow *native_win = HarmonyOSNativeWindow::singleton;
+	if (!native_win) {
+		OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: no HarmonyOSNativeWindow");
+		return false;
+	}
+
+	OHNativeWindow *oh_window = native_win->get_native_window();
+	if (!oh_window) {
+		OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: OHNativeWindow is NULL");
+		return false;
+	}
+	OH_LOG_INFO(LOG_APP, "[DS] reset_window: OHNativeWindow=%{public}p size=%{public}dx%{public}d",
+			(void *)oh_window, get_window_size().width, get_window_size().height);
+
+	RenderingContextDriverVulkanHarmonyOS::WindowPlatformData wpd;
+	wpd.native_window = oh_window;
+	if (ctx->window_create(window_id, &wpd) != OK) {
+		ERR_PRINT("Failed to reset Vulkan window.");
+		OH_LOG_ERROR(LOG_APP, "[DS] reset_window FAILED: window_create error");
+		return false;
+	}
+	OH_LOG_INFO(LOG_APP, "[DS] reset_window: window_create OK");
+
+	ctx->window_set_size(window_id, get_window_size().width, get_window_size().height);
+	ctx->window_set_vsync_mode(window_id, last_vsync_mode);
+
+	if (rendering_device == nullptr) {
+		OH_LOG_ERROR(LOG_APP, "[DS] reset_window: rendering_device is NULL");
+		ctx->window_destroy(window_id);
+		return false;
+	}
+
+	Error err = rendering_device->screen_create(DisplayServerEnums::MAIN_WINDOW_ID);
+	if (err != OK) {
+		ERR_PRINT("Failed to create Vulkan swap chain for main window.");
+		OH_LOG_ERROR(LOG_APP, "[DS] reset_window: screen_create FAILED err=%{public}d", (int)err);
+		ctx->window_destroy(window_id);
+		return false;
+	}
+
+	rendering_window_created = true;
+	OH_LOG_INFO(LOG_APP, "[DS] reset_window: screen_create OK, swapchain size=%{public}dx%{public}d",
+			rendering_device->screen_get_width(DisplayServerEnums::MAIN_WINDOW_ID),
+			rendering_device->screen_get_height(DisplayServerEnums::MAIN_WINDOW_ID));
+	return true;
 }
 #endif // VULKAN_ENABLED
 
@@ -691,6 +745,14 @@ DisplayServerHarmonyOS::DisplayServerHarmonyOS(const String &p_rendering_driver,
 		return;
 	}
 
+	HarmonyOSNativeWindow *native_win = HarmonyOSNativeWindow::singleton;
+	if (!native_win || !native_win->is_surface_ready() || !native_win->get_native_window() ||
+			native_win->get_width() == 0 || native_win->get_height() == 0) {
+		OH_LOG_ERROR(LOG_APP, "[DS] ctor: a valid OHNativeWindow must exist before Main::setup");
+		r_error = ERR_UNAVAILABLE;
+		return;
+	}
+	set_window_size(Size2i((int)native_win->get_width(), (int)native_win->get_height()));
 	r_error = OK;
 
 	// TTS framework stub — OHOS NDK 当前无 TTS API，预留框架供未来对接。
@@ -703,42 +765,98 @@ DisplayServerHarmonyOS::DisplayServerHarmonyOS(const String &p_rendering_driver,
 	native_menu = memnew(NativeMenu);
 
 #if defined(VULKAN_ENABLED) && defined(RD_ENABLED)
-	// Initialize the Vulkan context and RenderingDevice as early as possible,
-	// mirroring DisplayServerWindows. Main::setup2() creates the
-	// RenderingServer right after this constructor returns, and
-	// RenderingServerDefault::_init() calls RendererCompositor::create(),
-	// which requires RendererCompositorRD::make_current() to have run (it
-	// installs the _create_func used by RendererCompositor::create()).
-	//
-	// The XComponent surface (OHNativeWindow) does not exist yet at this
-	// point, so the RenderingDevice is initialized without a main window
-	// (INVALID_WINDOW_ID). The swap chain is created later in reset_window()
-	// once the surface is available.
+	// Match DisplayServerWindows: the platform window is already real when
+	// RenderingDevice is initialized, so Main::setup can safely perform early
+	// editor draws. Initializing with INVALID_WINDOW_ID here reproduces the
+	// missing-swapchain SIGSEGV seen on HarmonyOS.
 	if (check_vulkan_global_context(true)) {
 		RenderingContextDriver *ctx = rendering_context_global.load(std::memory_order_acquire);
 		if (ctx) {
+			RenderingContextDriverVulkanHarmonyOS::WindowPlatformData wpd;
+			wpd.native_window = native_win->get_native_window();
+			if (ctx->window_create(DisplayServerEnums::MAIN_WINDOW_ID, &wpd) != OK) {
+				ERR_PRINT("Failed to create HarmonyOS Vulkan main window.");
+				OH_LOG_ERROR(LOG_APP, "[DS] ctor: window_create FAILED");
+
+				const BitField<RenderingDevice::TextureUsageBits> depth_usage =
+						RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT |
+						RenderingDevice::TEXTURE_USAGE_CAN_UPDATE_BIT |
+						RenderingDevice::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+				const BitField<RenderingDevice::TextureUsageBits> uint_sample_usage =
+						RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT |
+						RenderingDevice::TEXTURE_USAGE_CAN_UPDATE_BIT;
+				const BitField<RenderingDevice::TextureUsageBits> vrs_fallback_usage =
+						RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT |
+						RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT |
+						RenderingDevice::TEXTURE_USAGE_STORAGE_BIT |
+						RenderingDevice::TEXTURE_USAGE_CAN_UPDATE_BIT;
+				OH_LOG_INFO(LOG_APP,
+						"[VK format] depth D16=%{public}d D32=%{public}d X8D24=%{public}d",
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_D16_UNORM, depth_usage),
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_D32_SFLOAT, depth_usage),
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_X8_D24_UNORM_PACK32, depth_usage));
+				OH_LOG_INFO(LOG_APP,
+						"[VK format] uint-sample R8=%{public}d R16=%{public}d R32=%{public}d RGBA8=%{public}d",
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_R8_UINT, uint_sample_usage),
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_R16_UINT, uint_sample_usage),
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_R32_UINT, uint_sample_usage),
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_R8G8B8A8_UINT, uint_sample_usage));
+				OH_LOG_INFO(LOG_APP,
+						"[VK format] vrs-fallback R8=%{public}d R16=%{public}d R32=%{public}d RGBA8=%{public}d",
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_R8_UINT, vrs_fallback_usage),
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_R16_UINT, vrs_fallback_usage),
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_R32_UINT, vrs_fallback_usage),
+						(int)rendering_device->texture_is_format_supported_for_usage(RenderingDevice::DATA_FORMAT_R8G8B8A8_UINT, vrs_fallback_usage));
+				r_error = ERR_UNAVAILABLE;
+				return;
+			}
+			ctx->window_set_size(DisplayServerEnums::MAIN_WINDOW_ID,
+					get_window_size().width, get_window_size().height);
+			ctx->window_set_vsync_mode(DisplayServerEnums::MAIN_WINDOW_ID, p_vsync_mode);
+
 			rendering_device = memnew(RenderingDevice);
-			if (rendering_device->initialize(ctx, DisplayServerEnums::INVALID_WINDOW_ID) == OK) {
+			if (rendering_device->initialize(ctx, DisplayServerEnums::MAIN_WINDOW_ID) == OK) {
+				// Match DisplayServerWindows: RenderingDevice::initialize() creates
+				// the device and queues, but it does not create the main-window swap
+				// chain. screen_create() must succeed before RendererCompositorRD can
+				// become current; otherwise Main::setup continues with no screen and
+				// later dereferences invalid rendering state.
+				Error screen_error = rendering_device->screen_create(DisplayServerEnums::MAIN_WINDOW_ID);
+				if (screen_error != OK) {
+					OH_LOG_ERROR(LOG_APP, "[DS] ctor: screen_create FAILED err=%{public}d", (int)screen_error);
+					memdelete(rendering_device);
+					rendering_device = nullptr;
+					ctx->window_destroy(DisplayServerEnums::MAIN_WINDOW_ID);
+					r_error = ERR_UNAVAILABLE;
+					return;
+				}
+
 				RendererCompositorRD::make_current();
-				OH_LOG_INFO(LOG_APP, "[DS] ctor: RenderingDevice init OK, make_current done");
+				rendering_window_created = true;
+				window_can_draw_val.store(true, std::memory_order_release);
+				OH_LOG_INFO(LOG_APP, "[DS] ctor: main window + swapchain ready %{public}dx%{public}d",
+						get_window_size().width, get_window_size().height);
 			} else {
 				memdelete(rendering_device);
 				rendering_device = nullptr;
-				ERR_PRINT("Failed to initialize RenderingDevice (Vulkan).");
-				OH_LOG_ERROR(LOG_APP, "[DS] ctor: RenderingDevice init FAILED");
+				ctx->window_destroy(DisplayServerEnums::MAIN_WINDOW_ID);
+				ERR_PRINT("Failed to initialize RenderingDevice (Vulkan) with the main window.");
+				OH_LOG_ERROR(LOG_APP, "[DS] ctor: RenderingDevice main-window init FAILED");
+				r_error = ERR_UNAVAILABLE;
+				return;
 			}
 		} else {
 			OH_LOG_ERROR(LOG_APP, "[DS] ctor: Vulkan ctx null after check");
+			r_error = ERR_UNAVAILABLE;
+			return;
 		}
 	} else {
 		ERR_PRINT("Failed to initialize Vulkan context.");
 		OH_LOG_ERROR(LOG_APP, "[DS] ctor: check_vulkan_global_context FAILED");
+		r_error = ERR_UNAVAILABLE;
+		return;
 	}
 #endif
-
-	// Rendering context and device are initialized separately
-	// through check_vulkan_global_context() and reset_window()
-	// after the surface becomes available.
 
 	// Route engine-generated input events back through this DisplayServer so
 	// that per-window input callbacks fire. Without this registration
@@ -797,6 +915,7 @@ DisplayServerHarmonyOS::~DisplayServerHarmonyOS() {
 	}
 
 #if defined(VULKAN_ENABLED) && defined(RD_ENABLED)
+	release_rendering_window();
 	if (rendering_device) {
 		memdelete(rendering_device);
 		rendering_device = nullptr;

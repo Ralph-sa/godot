@@ -6,9 +6,37 @@
 
 #include "harmonyos_log.h"
 
+#include <atomic>
+#include <dlfcn.h>
+#include <execinfo.h>
 #include <cstdio>
 #include <cstring>
 #include <sys/stat.h>
+
+static void _log_first_unexpected_nul_backtrace() {
+	static std::atomic<bool> logged(false);
+	bool expected = false;
+	if (!logged.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+		return;
+	}
+
+	void *frames[64];
+	int frame_count = backtrace(frames, 64);
+	OH_LOG_ERROR(LOG_APP, "[UnicodeNUL] first occurrence, native frames=%{public}d", frame_count);
+	for (int i = 1; i < frame_count; i++) {
+		Dl_info info = {};
+		if (dladdr(frames[i], &info) != 0 && info.dli_fbase) {
+			const char *module = info.dli_fname ? strrchr(info.dli_fname, '/') : nullptr;
+			module = module ? module + 1 : (info.dli_fname ? info.dli_fname : "<unknown>");
+			uintptr_t offset = reinterpret_cast<uintptr_t>(frames[i]) - reinterpret_cast<uintptr_t>(info.dli_fbase);
+			OH_LOG_ERROR(LOG_APP, "[UnicodeNUL] #%{public}d %{public}s+0x%{public}llx %{public}s",
+					i, module, static_cast<unsigned long long>(offset),
+					info.dli_sname ? info.dli_sname : "<no-symbol>");
+		} else {
+			OH_LOG_ERROR(LOG_APP, "[UnicodeNUL] #%{public}d pc=%{public}p", i, frames[i]);
+		}
+	}
+}
 
 const char *HarmonyOSEngineLogger::log_file_path() {
 	// The virtual sandbox path is resolvable from inside the process; the
@@ -48,6 +76,9 @@ void HarmonyOSEngineLogger::logv(const char *p_format, va_list p_list, bool p_er
 	FILE *f = fopen(log_file_path(), "a");
 	if (f) {
 		fprintf(f, "%s\n", buf);
+		if (strstr(buf, "Unexpected NUL character") != nullptr) {
+			_log_first_unexpected_nul_backtrace();
+		}
 		fclose(f);
 	}
 }

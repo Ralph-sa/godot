@@ -186,12 +186,15 @@ public:
 #ifdef VULKAN_ENABLED
 	static bool check_vulkan_global_context(bool p_vulkan_requirements_met);
 	static void free_vulkan_global_context();
-	void reset_window();
+	void release_rendering_window();
+	bool reset_window();
+	bool is_rendering_window_created() const { return rendering_window_created; }
 #endif
 
 private:
 #ifdef VULKAN_ENABLED
 	RenderingDevice *rendering_device = nullptr;
+	bool rendering_window_created = false;
 #endif
 
 	DisplayServerHarmonyOS(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, DisplayServerEnums::Context p_context, int64_t p_parent_window, Error &r_error);

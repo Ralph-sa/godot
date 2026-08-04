@@ -5313,7 +5313,16 @@ bool RenderingDeviceDriverVulkan::pipeline_cache_create(const Vector<uint8_t> &p
 		VkPipelineCacheCreateInfo cache_info = {};
 		cache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
 		cache_info.initialDataSize = pipelines_cache.buffer.size() - sizeof(PipelineCacheHeader);
+#ifdef HARMONYOS_ENABLED
+		// HarmonyOS' x86_64 simulator translation driver attempts memcpy_s even
+		// when initialDataSize is zero. Vulkan requires pInitialData to be ignored
+		// in that case, but passing nullptr avoids the buggy marshaling path and
+		// leaves real cache data unchanged.
+		cache_info.pInitialData = cache_info.initialDataSize > 0 ?
+				pipelines_cache.buffer.ptr() + sizeof(PipelineCacheHeader) : nullptr;
+#else
 		cache_info.pInitialData = pipelines_cache.buffer.ptr() + sizeof(PipelineCacheHeader);
+#endif
 
 		VkResult err = vkCreatePipelineCache(vk_device, &cache_info, VKC::get_allocation_callbacks(VK_OBJECT_TYPE_PIPELINE_CACHE), &pipelines_cache.vk_cache);
 		if (err != VK_SUCCESS) {

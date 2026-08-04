@@ -20,6 +20,8 @@
 #include <cstdlib>
 #include <vector>
 #include <atomic>
+#include <deque>
+#include <mutex>
 #include <unistd.h>
 
 // Explicit visibility attribute for dlopen/dlsym by NAPI bridge.
@@ -37,12 +39,182 @@ static std::atomic<bool> g_engine_stopped(false);
 static std::atomic<bool> g_engine_cleanup_done(false);
 static std::atomic<bool> g_paused(false);
 static std::atomic<bool> g_swapchain_created(false);
+static std::atomic<uint64_t> g_active_surface_id(0);
+static std::atomic<uint64_t> g_active_surface_generation(0);
+static std::atomic<uint64_t> g_last_destroyed_surface_generation(0);
 
-// Getter provided by the NAPI bridge (libgodot_napi.so). Resolved at runtime
-// through the same weak-symbol mechanism as harmonyos_notify_window_title:
-// the bridge is loaded with RTLD_GLOBAL, so its symbols satisfy libgodot's
-// weak undefined references.
-extern "C" OH_NativeXComponent *harmonyos_get_xcomponent() __attribute__((weak));
+enum class SurfaceRequestType {
+	CREATE,
+	DESTROY,
+	UPDATE_XCOMPONENT,
+};
+
+struct SurfaceRequest {
+	SurfaceRequestType type = SurfaceRequestType::DESTROY;
+	uint64_t surface_id = 0;
+	uint64_t generation = 0;
+	int width = 0;
+	int height = 0;
+	void *native_xcomponent = nullptr;
+};
+
+static std::mutex g_surface_request_mutex;
+static std::deque<SurfaceRequest> g_surface_requests;
+
+static bool _parse_surface_id(const char *p_surface_id, uint64_t &r_surface_id) {
+	if (!p_surface_id || p_surface_id[0] == '\0') {
+		return false;
+	}
+
+	char *end = nullptr;
+	uint64_t surface_id = strtoull(p_surface_id, &end, 10);
+	if (end == p_surface_id || !end || *end != '\0' || surface_id == 0) {
+		return false;
+	}
+
+	r_surface_id = surface_id;
+	return true;
+}
+
+static void _record_destroyed_surface_generation(uint64_t p_generation) {
+	uint64_t previous = g_last_destroyed_surface_generation.load(std::memory_order_acquire);
+	while (previous < p_generation &&
+			!g_last_destroyed_surface_generation.compare_exchange_weak(
+					previous, p_generation, std::memory_order_acq_rel, std::memory_order_acquire)) {
+	}
+}
+
+static bool _apply_surface_destroyed_on_engine_thread(uint64_t p_surface_id,
+		uint64_t p_generation, bool p_force = false) {
+	// A destroy is a monotonic lifecycle fact even when it refers to a surface
+	// that is no longer active. Record the tombstone before any stale-request
+	// filtering so a delayed create can never resurrect this generation.
+	_record_destroyed_surface_generation(p_generation);
+	uint64_t active_surface_id = g_active_surface_id.load(std::memory_order_acquire);
+	uint64_t active_generation = g_active_surface_generation.load(std::memory_order_acquire);
+	if (!p_force && (p_surface_id != active_surface_id || p_generation != active_generation)) {
+		OH_LOG_WARN(LOG_APP,
+				"Ignoring stale surface destroy sid=%{public}llu generation=%{public}llu active=%{public}llu/%{public}llu",
+				(unsigned long long)p_surface_id, (unsigned long long)p_generation,
+				(unsigned long long)active_surface_id, (unsigned long long)active_generation);
+		return false;
+	}
+
+	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
+	if (ds) {
+		ds->notify_surface_destroyed();
+#ifdef VULKAN_ENABLED
+		ds->release_rendering_window();
+#endif
+	}
+
+	// The RenderingDevice swapchain and RenderingContext window no longer
+	// reference this handle, so it is now safe to release the OHNativeWindow.
+	if (g_native_window) {
+		g_native_window->destroy();
+	}
+
+	g_surface_created.store(false, std::memory_order_release);
+	g_swapchain_created.store(false, std::memory_order_release);
+	g_active_surface_id.store(0, std::memory_order_release);
+	g_active_surface_generation.store(0, std::memory_order_release);
+	OH_LOG_INFO(LOG_APP, "Surface resources released on engine thread");
+	return true;
+}
+
+static int _apply_surface_created_on_engine_thread(uint64_t p_surface_id, int p_width, int p_height,
+		uint64_t p_generation) {
+	if (!g_native_window || p_surface_id == 0 || p_width <= 0 || p_height <= 0 || p_generation == 0) {
+		OH_LOG_ERROR(LOG_APP, "Invalid surface request on engine thread");
+		return -1;
+	}
+	uint64_t destroyed_generation = g_last_destroyed_surface_generation.load(std::memory_order_acquire);
+	if (p_generation <= destroyed_generation) {
+		OH_LOG_WARN(LOG_APP,
+				"Ignoring destroyed surface generation=%{public}llu tombstone=%{public}llu",
+				(unsigned long long)p_generation, (unsigned long long)destroyed_generation);
+		return 0;
+	}
+
+	uint64_t active_surface_id = g_active_surface_id.load(std::memory_order_acquire);
+	uint64_t active_generation = g_active_surface_generation.load(std::memory_order_acquire);
+	if (active_generation > p_generation) {
+		OH_LOG_WARN(LOG_APP,
+				"Ignoring stale surface create sid=%{public}llu generation=%{public}llu active_generation=%{public}llu",
+				(unsigned long long)p_surface_id, (unsigned long long)p_generation,
+				(unsigned long long)active_generation);
+		return 0;
+	}
+
+	if (g_surface_created.load(std::memory_order_acquire) &&
+			active_surface_id == p_surface_id && active_generation == p_generation) {
+		g_native_window->update_surface_size((uint64_t)p_width, (uint64_t)p_height);
+		if (DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton()) {
+			ds->notify_surface_changed(p_width, p_height);
+		}
+		OH_LOG_INFO(LOG_APP,
+				"Active surface resized sid=%{public}llu generation=%{public}llu size=%{public}dx%{public}d",
+				(unsigned long long)p_surface_id, (unsigned long long)p_generation, p_width, p_height);
+		return 0;
+	}
+
+	if (g_surface_created.load(std::memory_order_acquire) || g_native_window->is_surface_ready()) {
+		OH_LOG_WARN(LOG_APP, "Replacing an active surface on engine thread");
+		_apply_surface_destroyed_on_engine_thread(active_surface_id, active_generation, true);
+	}
+
+	if (!g_native_window->initialize_with_surface_id(
+				p_surface_id, (uint64_t)p_width, (uint64_t)p_height)) {
+		OH_LOG_ERROR(LOG_APP, "surface_id init FAILED sid=%{public}llu", (unsigned long long)p_surface_id);
+		return -1;
+	}
+
+	g_surface_created.store(true, std::memory_order_release);
+	g_swapchain_created.store(false, std::memory_order_release);
+	g_active_surface_id.store(p_surface_id, std::memory_order_release);
+	g_active_surface_generation.store(p_generation, std::memory_order_release);
+	if (DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton()) {
+		ds->notify_surface_changed(p_width, p_height);
+	}
+
+	OH_LOG_INFO(LOG_APP,
+			"Native surface applied on engine thread sid=%{public}llu generation=%{public}llu size=%{public}dx%{public}d",
+			(unsigned long long)p_surface_id, (unsigned long long)p_generation, p_width, p_height);
+	return 0;
+}
+
+static void _queue_surface_request(const SurfaceRequest &p_request) {
+	std::lock_guard<std::mutex> lock(g_surface_request_mutex);
+	g_surface_requests.push_back(p_request);
+}
+
+static void _clear_surface_requests() {
+	std::lock_guard<std::mutex> lock(g_surface_request_mutex);
+	g_surface_requests.clear();
+}
+
+static void _process_surface_requests_on_engine_thread() {
+	std::deque<SurfaceRequest> requests;
+	{
+		std::lock_guard<std::mutex> lock(g_surface_request_mutex);
+		requests.swap(g_surface_requests);
+	}
+
+	for (const SurfaceRequest &request : requests) {
+		if (request.type == SurfaceRequestType::DESTROY) {
+			_apply_surface_destroyed_on_engine_thread(request.surface_id, request.generation);
+		} else if (request.type == SurfaceRequestType::CREATE && _apply_surface_created_on_engine_thread(
+					request.surface_id, request.width, request.height, request.generation) != 0) {
+			OH_LOG_ERROR(LOG_APP, "Queued surface create failed sid=%{public}llu generation=%{public}llu",
+					(unsigned long long)request.surface_id, (unsigned long long)request.generation);
+		} else if (request.type == SurfaceRequestType::UPDATE_XCOMPONENT &&
+				g_native_window && request.native_xcomponent &&
+				!g_native_window->initialize_with_xcomponent(
+						static_cast<OH_NativeXComponent *>(request.native_xcomponent))) {
+			OH_LOG_WARN(LOG_APP, "Queued XComponent input-handle refresh failed");
+		}
+	}
+}
 
 // ---- Static initialization: register platform drivers at load time ----
 static struct PlatformInit {
@@ -52,7 +224,9 @@ static struct PlatformInit {
 	}
 } g_platform_init;
 
-HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
+HARMONYOS_EXPORT_FN int harmonyos_godot_init(const char *project_path, const char *files_dir, const char *cache_dir,
+		const char *temp_dir, const char *surface_id, int surface_width, int surface_height,
+		unsigned long long surface_generation, void *native_xcomponent) {
 	OH_LOG_INFO(LOG_APP, "[INIT STEP 10/16] harmonyos_godot_init entry");
 
 	bool expected = false;
@@ -66,6 +240,10 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 	g_engine_cleanup_done.store(false);
 	g_surface_created.store(false);
 	g_paused.store(false);
+	g_swapchain_created.store(false);
+	g_active_surface_id.store(0);
+	g_active_surface_generation.store(0);
+	_clear_surface_requests();
 
 	// Step 11 — Initialize crash handler early, before any engine setup.
 	OH_LOG_INFO(LOG_APP, "[INIT STEP 11/16] CrashHandler init");
@@ -75,6 +253,21 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 	// Step 12 — Create native window manager
 	OH_LOG_INFO(LOG_APP, "[INIT STEP 12/16] HarmonyOSNativeWindow create");
 	g_native_window = new HarmonyOSNativeWindow();
+	OH_NativeXComponent *xcomponent = static_cast<OH_NativeXComponent *>(native_xcomponent);
+	if (!xcomponent) {
+		OH_LOG_ERROR(LOG_APP, "Native XComponent handle is required before engine initialization");
+		g_engine_stopped.store(true, std::memory_order_release);
+		g_engine_initialized.store(false, std::memory_order_release);
+		delete g_crash_handler;
+		g_crash_handler = nullptr;
+		delete g_native_window;
+		g_native_window = nullptr;
+		g_engine_cleanup_done.store(true, std::memory_order_release);
+		return -1;
+	}
+	if (!g_native_window->initialize_with_xcomponent(xcomponent)) {
+		OH_LOG_WARN(LOG_APP, "Native XComponent input registration failed; wheel input is unavailable");
+	}
 
 	// Step 13 — Create the OS instance (must exist before Main::setup())
 	OH_LOG_INFO(LOG_APP, "[INIT STEP 13/16] OS_HarmonyOS instance create");
@@ -83,6 +276,46 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 		g_os_created.store(true, std::memory_order_release);
 		OH_LOG_INFO(LOG_APP, "OS_HarmonyOS instance created");
 	}
+	OS_HarmonyOS *os_harmonyos = static_cast<OS_HarmonyOS *>(OS::get_singleton());
+	if (!os_harmonyos || !files_dir || !cache_dir || !temp_dir ||
+			os_harmonyos->configure_sandbox_paths(files_dir, cache_dir, temp_dir) != OK) {
+		OH_LOG_ERROR(LOG_APP, "HarmonyOS sandbox configuration failed before Main::setup");
+		g_engine_stopped.store(true, std::memory_order_release);
+		g_engine_initialized.store(false, std::memory_order_release);
+		delete g_crash_handler;
+		g_crash_handler = nullptr;
+		delete g_native_window;
+		g_native_window = nullptr;
+		g_engine_cleanup_done.store(true, std::memory_order_release);
+		return -1;
+	}
+
+	// Windows has a real main window before Main::setup constructs the
+	// DisplayServer. Create the HarmonyOS equivalent now; delaying this until
+	// ArkTS sees isEngineReady leaves early editor draws without a swapchain.
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 13/17] preparing surface before Main::setup");
+	uint64_t initial_surface_id = 0;
+	int surface_status = _parse_surface_id(surface_id, initial_surface_id) ?
+			_apply_surface_created_on_engine_thread(initial_surface_id, surface_width, surface_height,
+					(uint64_t)surface_generation) :
+			-1;
+	if (surface_status != 0 || !g_native_window || !g_native_window->is_surface_ready()) {
+		OH_LOG_ERROR(LOG_APP, "Surface initialization failed before Main::setup, status=%{public}d", surface_status);
+		g_engine_stopped.store(true, std::memory_order_release);
+		g_engine_initialized.store(false, std::memory_order_release);
+		g_surface_created.store(false, std::memory_order_release);
+		if (g_crash_handler) {
+			delete g_crash_handler;
+			g_crash_handler = nullptr;
+		}
+		if (g_native_window) {
+			delete g_native_window;
+			g_native_window = nullptr;
+		}
+		g_engine_cleanup_done.store(true, std::memory_order_release);
+		return -1;
+	}
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 13/17] native surface ready before Main::setup");
 
 	// Set command-line arguments for Godot Main.
 	// Reserve capacity up-front to avoid std::string move during
@@ -92,14 +325,22 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 	// ProjectSettings::_load_settings_text.
 	std::vector<char *> args;
 	std::vector<std::string> arg_strings;
-	arg_strings.reserve(4);
+	arg_strings.reserve(6);
 	arg_strings.push_back("godot_harmonyos");
 #ifdef TOOLS_ENABLED
 	arg_strings.push_back("--editor");
 #endif
 	arg_strings.push_back("--rendering-driver");
 	arg_strings.push_back("vulkan");
+	if (project_path && project_path[0] != '\0') {
+		arg_strings.push_back("--path");
+		arg_strings.push_back(project_path);
+		OH_LOG_INFO(LOG_APP, "Launching selected project: %{public}s", project_path);
+	} else {
+		OH_LOG_INFO(LOG_APP, "No project path supplied; launching Project Manager");
+	}
 
+	args.reserve(arg_strings.size());
 	for (auto &s : arg_strings) {
 		args.push_back(&s[0]);
 	}
@@ -109,9 +350,42 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 	Error err = Main::setup(nullptr, (int)args.size(), args.data());
 	if (err != OK) {
 		OH_LOG_ERROR(LOG_APP, "Main::setup failed with error: %{public}d", err);
-		OH_LOG_WARN(LOG_APP, "Main::setup returned error, continuing...");
+		g_engine_stopped.store(true, std::memory_order_release);
+		g_engine_initialized.store(false, std::memory_order_release);
+		if (g_crash_handler) {
+			delete g_crash_handler;
+			g_crash_handler = nullptr;
+		}
+		if (g_native_window) {
+			delete g_native_window;
+			g_native_window = nullptr;
+		}
+		g_engine_cleanup_done.store(true, std::memory_order_release);
+		return (int)err;
 	}
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 14/16] Main::setup DONE, err=%{public}d", (int)err);
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 14/17] Main::setup DONE, err=%{public}d", (int)err);
+
+	DisplayServerHarmonyOS *display_server = DisplayServerHarmonyOS::get_singleton();
+	if (!display_server || !display_server->is_rendering_window_created()) {
+		OH_LOG_ERROR(LOG_APP, "Main::setup completed without a valid main-window swapchain");
+		Main::cleanup();
+		g_engine_stopped.store(true, std::memory_order_release);
+		g_engine_initialized.store(false, std::memory_order_release);
+		g_surface_created.store(false, std::memory_order_release);
+		if (g_crash_handler) {
+			delete g_crash_handler;
+			g_crash_handler = nullptr;
+		}
+		if (g_native_window) {
+			delete g_native_window;
+			g_native_window = nullptr;
+		}
+		g_engine_cleanup_done.store(true, std::memory_order_release);
+		return (int)ERR_CANT_CREATE;
+	}
+	g_swapchain_created.store(true, std::memory_order_release);
+	display_server->notify_surface_created();
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 14/17] main-window swapchain verified before Main::start");
 
 	// NOTE: Unlike desktop platforms, we do NOT call Main::start() here.
 	// Main::start() creates the main loop (SceneTree/EditorNode) and must run
@@ -126,80 +400,64 @@ HARMONYOS_EXPORT_FN int harmonyos_godot_init() {
 // Runs on the engine thread: waits for the rendering surface, starts the main
 // loop, and drives Main::iteration() until cleanup is requested.
 HARMONYOS_EXPORT_FN void harmonyos_godot_start() {
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 17/17] harmonyos_godot_start waiting for surface");
-
-	// Wait until the XComponent surface callback has run (ArkTS onLoad → NAPI
-	// onSurfaceCreated). The OHNativeWindow handle may arrive slightly later
-	// via the XComponent OnSurfaceCreated callback; if it is not ready yet,
-	// the frame loop below lazily creates the swapchain once it is.
-	int waits = 0;
-	while (!g_surface_created.load(std::memory_order_acquire) &&
-			!g_engine_stopped.load(std::memory_order_acquire)) {
-		usleep(10000);
-		waits++;
-		if (waits > 2000) { // 20s timeout
-			OH_LOG_ERROR(LOG_APP, "Timed out waiting for rendering surface");
-			g_engine_stopped.store(true);
-			break;
-		}
-	}
-
+	OH_LOG_INFO(LOG_APP, "[INIT STEP 15/17] harmonyos_godot_start validating pre-created surface");
+	_process_surface_requests_on_engine_thread();
 	if (g_engine_stopped.load(std::memory_order_acquire)) {
-		OH_LOG_WARN(LOG_APP, "Engine stopped before start, skipping main loop");
-		g_engine_cleanup_done.store(true);
+		OH_LOG_WARN(LOG_APP, "Engine stop requested before Main::start");
+		Main::cleanup();
+		if (g_crash_handler) {
+			delete g_crash_handler;
+			g_crash_handler = nullptr;
+		}
+		if (g_native_window) {
+			delete g_native_window;
+			g_native_window = nullptr;
+		}
+		g_engine_initialized.store(false, std::memory_order_release);
+		g_engine_cleanup_done.store(true, std::memory_order_release);
 		return;
 	}
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 17/17] surface wait done: surface_created=%{public}d, surface_ready=%{public}d",
-			(int)g_surface_created.load(std::memory_order_acquire),
-			g_native_window ? (int)g_native_window->is_surface_ready() : -1);
 
-	// Register the XComponent native callbacks on the engine thread if the
-	// JS-thread path hasn't already done so (defensive, idempotent).
-	OH_NativeXComponent *xcomponent = nullptr;
-	if (harmonyos_get_xcomponent) {
-		xcomponent = harmonyos_get_xcomponent();
-	}
-	if (xcomponent && g_native_window && !g_native_window->is_surface_ready()) {
-		g_native_window->initialize_with_xcomponent(xcomponent);
-		OH_LOG_INFO(LOG_APP, "[INIT STEP 17/17] registered XComponent callbacks from engine thread, xc=%{public}p",
-				(void *)xcomponent);
-	} else {
-		OH_LOG_INFO(LOG_APP, "[INIT STEP 17/17] xcomponent=%{public}p native_window=%{public}p surface_ready=%{public}d",
-				(void *)xcomponent, (void *)g_native_window,
-				g_native_window ? (int)g_native_window->is_surface_ready() : -1);
-	}
-
-	// Give the OHNativeWindow handle a short, bounded window to arrive via the
-	// XComponent OnSurfaceCreated callback. If it doesn't arrive in time the
-	// frame loop below falls back to lazy swapchain creation.
-	int surf_waits = 0;
-	while (g_native_window && !g_native_window->is_surface_ready() &&
-			!g_engine_stopped.load(std::memory_order_acquire) && surf_waits < 500) {
-		usleep(10000);
-		surf_waits++;
-	}
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 17/17] surface_ready wait done after %{public}d ticks, ready=%{public}d",
-			surf_waits, g_native_window ? (int)g_native_window->is_surface_ready() : -1);
-
-	// Create the Vulkan window surface + swapchain on the engine thread once
-	// the OHNativeWindow is available. This must complete before the first
-	// presented frame so rendering has a swapchain to present into. (Creating
-	// it from the JS/onLoad thread raced the surface-created callback and
-	// silently skipped swapchain creation.)
 	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
-	if (ds && ds->check_vulkan_global_context(true) && g_native_window &&
-			g_native_window->is_surface_ready()) {
-		OH_LOG_INFO(LOG_APP, "[INIT STEP 17/17] calling reset_window before Main::start");
-		ds->reset_window();
-		g_swapchain_created.store(true);
-		OH_LOG_INFO(LOG_APP, "[INIT STEP 17/17] swapchain created before Main::start");
-	} else {
-		OH_LOG_WARN(LOG_APP, "[INIT STEP 17/17] swapchain deferred: ds=%{public}p vulkan_ok=%{public}d ready=%{public}d",
-				(void *)ds,
-				ds ? (int)ds->check_vulkan_global_context(true) : -1,
-				g_native_window ? (int)g_native_window->is_surface_ready() : -1);
+	if (!g_surface_created.load(std::memory_order_acquire) || !g_native_window ||
+			!g_native_window->is_surface_ready() || !ds) {
+		OH_LOG_ERROR(LOG_APP, "Cannot start: pre-created surface or DisplayServer is missing");
+		g_engine_stopped.store(true, std::memory_order_release);
+		Main::cleanup();
+		if (g_crash_handler) {
+			delete g_crash_handler;
+			g_crash_handler = nullptr;
+		}
+		if (g_native_window) {
+			delete g_native_window;
+			g_native_window = nullptr;
+		}
+		g_engine_cleanup_done.store(true, std::memory_order_release);
+		return;
 	}
 
+	if (ds->is_rendering_window_created()) {
+		g_swapchain_created.store(true, std::memory_order_release);
+		OH_LOG_INFO(LOG_APP, "[INIT STEP 15/17] constructor-created swapchain is ready");
+	} else if (ds->check_vulkan_global_context(true) && ds->reset_window()) {
+		g_swapchain_created.store(true, std::memory_order_release);
+		ds->notify_surface_created();
+		OH_LOG_WARN(LOG_APP, "[INIT STEP 15/17] recovered swapchain through reset_window");
+	} else {
+		OH_LOG_ERROR(LOG_APP, "Cannot start: failed to create main-window swapchain");
+		g_engine_stopped.store(true, std::memory_order_release);
+		Main::cleanup();
+		if (g_crash_handler) {
+			delete g_crash_handler;
+			g_crash_handler = nullptr;
+		}
+		if (g_native_window) {
+			delete g_native_window;
+			g_native_window = nullptr;
+		}
+		g_engine_cleanup_done.store(true, std::memory_order_release);
+		return;
+	}
 	// Step 15 — Create the main loop (SceneTree / EditorNode).
 	OH_LOG_INFO(LOG_APP, "[INIT STEP 15/16] Main::start");
 	if (Main::start() != EXIT_SUCCESS) {
@@ -242,6 +500,11 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_start() {
 	// All engine iteration happens on this single engine thread.
 	int frame_count = 0;
 	while (!g_engine_stopped.load(std::memory_order_acquire)) {
+		// Surface callbacks originate on the ArkTS/NAPI thread. Consume them
+		// here before pause throttling so background destruction still releases
+		// Vulkan resources on their owning engine thread.
+		_process_surface_requests_on_engine_thread();
+
 		if (g_paused.load(std::memory_order_acquire)) {
 			usleep(10000);
 			continue;
@@ -256,9 +519,9 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_start() {
 			OH_LOG_INFO(LOG_APP, "[frame] lazy swapchain attempt: ready=%{public}d",
 					(int)g_native_window->is_surface_ready());
 			DisplayServerHarmonyOS *dsp = DisplayServerHarmonyOS::get_singleton();
-			if (dsp && dsp->check_vulkan_global_context(true)) {
-				dsp->reset_window();
+			if (dsp && dsp->check_vulkan_global_context(true) && dsp->reset_window()) {
 				g_swapchain_created.store(true);
+				dsp->notify_surface_created();
 				OH_LOG_INFO(LOG_APP, "Swapchain created lazily in frame loop");
 			} else {
 				OH_LOG_WARN(LOG_APP, "[frame] lazy swapchain failed: dsp=%{public}p", (void *)dsp);
@@ -331,6 +594,7 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_start() {
 
 	OH_LOG_INFO(LOG_APP, "Frame loop ended after %{public}d frames (swapchain_created=%{public}d), running Main::cleanup",
 			frame_count, (int)g_swapchain_created.load(std::memory_order_acquire));
+	_process_surface_requests_on_engine_thread();
 
 	// Main::cleanup() must run on the same thread that called Main::setup/start.
 	Main::cleanup();
@@ -343,108 +607,106 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_start() {
 		delete g_native_window;
 		g_native_window = nullptr;
 	}
+	_clear_surface_requests();
+	g_surface_created.store(false, std::memory_order_release);
+	g_swapchain_created.store(false, std::memory_order_release);
+	g_active_surface_id.store(0, std::memory_order_release);
+	g_active_surface_generation.store(0, std::memory_order_release);
+	g_engine_started.store(false, std::memory_order_release);
+	g_engine_initialized.store(false, std::memory_order_release);
 	g_engine_cleanup_done.store(true);
 	OH_LOG_INFO(LOG_APP, "Engine cleanup done");
 }
 
-HARMONYOS_EXPORT_FN int harmonyos_godot_surface_created(const char *surface_id, int surface_width, int surface_height) {
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] Surface created: %{public}s size=%{public}dx%{public}d",
-			surface_id, surface_width, surface_height);
+HARMONYOS_EXPORT_FN int harmonyos_godot_surface_created(const char *surface_id, int surface_width,
+		int surface_height, unsigned long long surface_generation) {
+	OH_LOG_INFO(LOG_APP,
+			"Surface create requested: %{public}s generation=%{public}llu size=%{public}dx%{public}d",
+			surface_id ? surface_id : "<null>", surface_generation, surface_width, surface_height);
 
-	if (!g_native_window) {
-		OH_LOG_ERROR(LOG_APP, "Native window not initialized");
+	if (!g_engine_initialized.load(std::memory_order_acquire) ||
+			g_engine_stopped.load(std::memory_order_acquire) || !g_native_window ||
+			!surface_id || surface_id[0] == '\0' ||
+			surface_width <= 0 || surface_height <= 0 || surface_generation == 0) {
+		OH_LOG_ERROR(LOG_APP, "Invalid surface create request or engine state");
 		return -1;
 	}
 
-	// Prevent double-initialization from dual callback paths
-	bool expected = false;
-	if (!g_surface_created.compare_exchange_strong(expected, true)) {
-		OH_LOG_WARN(LOG_APP, "Surface already created, skipping duplicate callback");
+	uint64_t sid = 0;
+	if (!_parse_surface_id(surface_id, sid)) {
+		OH_LOG_ERROR(LOG_APP, "Invalid numeric surface id: %{public}s", surface_id);
+		return -1;
+	}
+	if ((uint64_t)surface_generation <=
+			g_last_destroyed_surface_generation.load(std::memory_order_acquire)) {
+		OH_LOG_WARN(LOG_APP, "Rejected create for an already destroyed surface generation=%{public}llu",
+				surface_generation);
 		return 0;
 	}
 
-	// Report the actual XComponent surface size (pixels) to the DisplayServer
-	// BEFORE the engine thread creates the Vulkan swap chain in
-	// reset_window(). The swap chain extent is derived from this size when the
-	// surface capabilities report an undefined current extent (0xFFFFFFFF),
-	// which is the case on the OHOS Vulkan implementation.
-	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
-	if (ds && surface_width > 0 && surface_height > 0) {
-		ds->notify_surface_changed(surface_width, surface_height);
-		OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] window size updated to %{public}dx%{public}d",
-				surface_width, surface_height);
-	}
-
-	// Preferred path (ArkTS XComponent scenario): create the OHNativeWindow
-	// directly from the numeric surface id reported by XComponentController.
-	// This is independent of the libraryname injection, which never fires here
-	// because libgodot_napi.so is already loaded by the ArkTS import statement
-	// before the XComponent is constructed.
-	if (surface_id && *surface_id) {
-		char *end = nullptr;
-		uint64_t sid = strtoull(surface_id, &end, 10);
-		if (end != surface_id && sid != 0) {
-			if (g_native_window->initialize_with_surface_id(sid)) {
-				OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] surface_id init OK sid=%{public}llu",
-						(unsigned long long)sid);
-			} else {
-				OH_LOG_ERROR(LOG_APP, "[INIT STEP 16/16] surface_id init FAILED sid=%{public}llu",
-						(unsigned long long)sid);
-			}
-		}
-	}
-
-	// Fallback path (Native XComponent scenario): register the XComponent
-	// native callbacks if the bridge managed to capture the XComponent handle.
-	// OnSurfaceCreated_CB then hands us the OHNativeWindow.
-	OH_NativeXComponent *xcomponent = nullptr;
-	if (harmonyos_get_xcomponent) {
-		xcomponent = harmonyos_get_xcomponent();
-	}
-	if (xcomponent && !g_native_window->is_surface_ready()) {
-		if (!g_native_window->initialize_with_xcomponent(xcomponent)) {
-			OH_LOG_ERROR(LOG_APP, "Failed to initialize with XComponent");
-		} else {
-			OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] initialize_with_xcomponent OK, xc=%{public}p",
-					(void *)xcomponent);
-		}
-	} else {
-		OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] xcomponent=%{public}p ready=%{public}d",
-				(void *)xcomponent, (int)g_native_window->is_surface_ready());
-	}
-
-	DisplayServerHarmonyOS *ds2 = DisplayServerHarmonyOS::get_singleton();
-	if (ds2) {
-		ds2->notify_surface_created();
-
-		// NOTE: Vulkan window surface / swapchain creation is deferred to
-		// harmonyos_godot_start() on the engine thread, which waits for the
-		// OHNativeWindow handle to arrive via the OnSurfaceCreated callback.
-		// Creating the swapchain here (JS thread) races that async callback
-		// and would leave the swapchain uncreated, causing a black screen.
-	} else {
-		OH_LOG_WARN(LOG_APP, "DisplayServer not ready for surface reset");
-	}
-
-	OH_LOG_INFO(LOG_APP, "[INIT STEP 16/16] Surface creation DONE");
+	SurfaceRequest request;
+	request.type = SurfaceRequestType::CREATE;
+	request.surface_id = sid;
+	request.generation = (uint64_t)surface_generation;
+	request.width = surface_width;
+	request.height = surface_height;
+	_queue_surface_request(request);
+	OH_LOG_INFO(LOG_APP, "Surface create queued for engine thread sid=%{public}llu generation=%{public}llu",
+			(unsigned long long)request.surface_id, (unsigned long long)request.generation);
 	return 0;
 }
 
-HARMONYOS_EXPORT_FN int harmonyos_godot_surface_destroy() {
-	OH_LOG_INFO(LOG_APP, "Surface destroyed");
-
-	DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton();
-	if (ds) {
-		ds->notify_surface_destroyed();
+HARMONYOS_EXPORT_FN int harmonyos_godot_surface_destroy(const char *surface_id,
+		unsigned long long surface_generation) {
+	uint64_t sid = 0;
+	if (!_parse_surface_id(surface_id, sid) || surface_generation == 0) {
+		OH_LOG_ERROR(LOG_APP, "Invalid surface destroy identity");
+		return -1;
 	}
 
-	if (g_native_window) {
-		g_native_window->destroy();
+	// Record immediately, including before engine initialization. The NAPI
+	// bridge also mirrors this tombstone so destroys received before dlopen are
+	// replayed into libgodot before the initial surface create is evaluated.
+	_record_destroyed_surface_generation((uint64_t)surface_generation);
+	if (!g_engine_initialized.load(std::memory_order_acquire) ||
+			g_engine_stopped.load(std::memory_order_acquire)) {
+		return 0;
 	}
 
-	g_surface_created.store(false, std::memory_order_release);
-
+	SurfaceRequest request;
+	request.type = SurfaceRequestType::DESTROY;
+	request.surface_id = sid;
+	request.generation = (uint64_t)surface_generation;
+	_queue_surface_request(request);
+	OH_LOG_INFO(LOG_APP, "Surface destroy queued for engine thread sid=%{public}llu generation=%{public}llu",
+			(unsigned long long)request.surface_id, (unsigned long long)request.generation);
 	return 0;
+}
+
+HARMONYOS_EXPORT_FN int harmonyos_godot_set_xcomponent(void *native_xcomponent) {
+	if (!native_xcomponent) {
+		return -1;
+	}
+	if (!g_engine_initialized.load(std::memory_order_acquire) ||
+			g_engine_stopped.load(std::memory_order_acquire)) {
+		// harmonyos_godot_init receives the latest handle directly. There is no
+		// engine-owned object to update before that point.
+		return 0;
+	}
+
+	SurfaceRequest request;
+	request.type = SurfaceRequestType::UPDATE_XCOMPONENT;
+	request.native_xcomponent = native_xcomponent;
+	_queue_surface_request(request);
+	OH_LOG_INFO(LOG_APP, "XComponent input-handle refresh queued for engine thread");
+	return 0;
+}
+
+HARMONYOS_EXPORT_FN void harmonyos_godot_set_destroyed_surface_generation(
+		unsigned long long surface_generation) {
+	if (surface_generation != 0) {
+		_record_destroyed_surface_generation((uint64_t)surface_generation);
+	}
 }
 
 HARMONYOS_EXPORT_FN void harmonyos_godot_cleanup() {
@@ -454,19 +716,7 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_cleanup() {
 	// on the engine thread itself (it must not be called from the NAPI/UI
 	// thread that owns no engine state).
 	g_engine_stopped.store(true, std::memory_order_release);
-
-	int waits = 0;
-	while (!g_engine_cleanup_done.load(std::memory_order_acquire) && waits < 400) {
-		usleep(50000);
-		waits++;
-	}
-	if (!g_engine_cleanup_done.load(std::memory_order_acquire)) {
-		OH_LOG_ERROR(LOG_APP, "Timed out waiting for engine cleanup");
-	}
-
-	g_engine_initialized.store(false, std::memory_order_release);
-
-	OH_LOG_INFO(LOG_APP, "===== Godot Engine Cleanup DONE =====");
+	OH_LOG_INFO(LOG_APP, "===== Godot Engine Cleanup REQUESTED =====");
 }
 
 HARMONYOS_EXPORT_FN void harmonyos_godot_on_pause() {
@@ -525,4 +775,14 @@ HARMONYOS_EXPORT_FN void harmonyos_godot_touch_event(int touch_id, int action, d
 HARMONYOS_EXPORT_FN void harmonyos_godot_input_text(const char *text) {
 	if (!g_engine_initialized.load(std::memory_order_acquire)) return;
 	HarmonyOSInput::process_input_text(text);
+}
+
+HARMONYOS_EXPORT_FN void harmonyos_godot_ime_update(const char *text, int selection_start, int selection_length) {
+	if (!g_engine_initialized.load(std::memory_order_acquire)) {
+		return;
+	}
+	if (DisplayServerHarmonyOS *ds = DisplayServerHarmonyOS::get_singleton()) {
+		ds->ime_text(text ? String::utf8(text) : String());
+		ds->ime_selection(Vector2i(selection_start, selection_length));
+	}
 }

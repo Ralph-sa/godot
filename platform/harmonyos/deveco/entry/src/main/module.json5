@@ -40,14 +40,6 @@
     ],
     "requestPermissions": [
       {
-        "name": "ohos.permission.READ_PASTEBOARD",
-        "reason": "$string:pasteboard_permission_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
-      },
-      {
         "name": "ohos.permission.INTERNET",
         "reason": "$string:internet_permission_reason",
         "usedScene": {

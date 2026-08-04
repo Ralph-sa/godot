@@ -16,7 +16,10 @@ public:
 	static HarmonyOSNativeWindow *singleton;
 
 	HarmonyOSNativeWindow() { singleton = this; }
-	~HarmonyOSNativeWindow() { singleton = nullptr; }
+	~HarmonyOSNativeWindow() {
+		destroy();
+		singleton = nullptr;
+	}
 
 	// Called from NAPI bridge when ArkTS provides the XComponent
 	bool initialize_with_xcomponent(OH_NativeXComponent *p_xcomponent);
@@ -25,7 +28,8 @@ public:
 	// (ArkTS XComponent scenario). Creates the OHNativeWindow directly from
 	// the surface id, avoiding the dependency on OH_NativeXComponent callbacks
 	// and the libraryname injection mechanism.
-	bool initialize_with_surface_id(uint64_t p_surface_id);
+	bool initialize_with_surface_id(uint64_t p_surface_id, uint64_t p_width, uint64_t p_height);
+	void update_surface_size(uint64_t p_width, uint64_t p_height);
 
 	void destroy();
 
@@ -33,12 +37,6 @@ public:
 	OHNativeWindow *get_native_window() const { return native_window_; }
 	uint64_t get_width() const { return width_; }
 	uint64_t get_height() const { return height_; }
-
-	// XComponent lifecycle callbacks
-	static void OnSurfaceCreated_CB(OH_NativeXComponent *component, void *window);
-	static void OnSurfaceChanged_CB(OH_NativeXComponent *component, void *window);
-	static void OnSurfaceDestroyed_CB(OH_NativeXComponent *component, void *window);
-	static void DispatchTouchEvent_CB(OH_NativeXComponent *component, void *window);
 
 	// Mouse wheel / axis input, registered via RegisterUIInputEventCallback.
 	static void DispatchAxisEvent_CB(OH_NativeXComponent *component,
