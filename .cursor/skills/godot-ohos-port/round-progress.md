@@ -19,6 +19,30 @@ interface_coverage: 88%
 
 ## 轮次记录
 
+### 第 10 轮修复（模拟器实测打通引擎启动，2026-08-15 晚，提交 0ad2343）
+
+> 背景：拿到模拟器实测机会后逐层排查「引擎启动即崩溃（SIGSEGV pc=0）」，
+> 通过 cacheDir 诊断文件逐级定位（hilog 在 DeviceDebuggable:No 设备上全部
+> 脱敏为 <private>，诊断文件是唯一可靠手段）。
+
+- **逐层定位与修复**：
+  1. `DisplayServer 构造时 OHOS_XComponent 为 null` → setXComponent NAPI 从未被调用 → 诊断：ArkTS `onLoad` 的 `context` 参数为 **undefined**；
+  2. 根因 A：**XComponent 未指定 `libraryname`** —— 不指定时 onLoad 上下文为空（官方机制：ACE 需加载对应 native 库后才回传上下文）；修复：`libraryname: 'godot'`；
+  3. 根因 B：即使指定 libraryname，**API 26 的 context.nativeXComponent 属性已不存在**（napi_get_named_property 返回 undefined，napi_unwrap/napi_get_value_external 均 invalid_arg）；
+  4. 最终方案（兼容新旧设备）：**surfaceId 路径** —— ArkTS 传 `getXComponentSurfaceId()` 字符串 + 窗口尺寸，C++ 用 `OH_NativeWindow_CreateNativeWindowFromSurfaceId` 直接创建 OHNativeWindow（Vulkan 仅需 OHNativeWindow），保留旧 napi 兼容路径；
+  5. `print_verbose(vformat(…%p))` 崩溃：Godot vformat 不支持 C 格式符，改诊断文件；
+  6. 手动创建的 OHNativeWindow 需 `SET_BUFFER_GEOMETRY` 初始化宽高，否则 Vulkan 交换链创建失败。
+- **实测结果（emulator 7.0.0.23 / API 26）**：
+  - Vulkan 上下文初始化 → 0；window_create → 0；RenderingDevice initialize → 0；RendererCompositorRD 注册成功；
+  - `Main::setup` + `Main::start` 全部跑通（此前的启动即崩溃链路彻底消除）；
+  - 引擎日志正常输出（ERR 均为模拟器软件 Vulkan 特性缺失警告：D16 采样纹理等）。
+- **遗留（环境限制）**：
+  - 模拟器软件 Vulkan 转译层（express_gpu）在编辑器渲染时自身崩溃（EMULATOR_CRASH 802002，qemu 崩溃退出）——模拟器限制，非移植代码问题；渲染画面验证需真机或待模拟器转译层更新；
+  - 渲染画面前，可尝试 `--rendering-method mobile`（特性需求更少）降低模拟器压力；
+  - 输入事件桥（触摸/键鼠）待接 ArkTS 事件路径（OH_NativeXComponent 回调注册在 surfaceId 路径下不可用）。
+- **调试基础设施**：cacheDir 诊断文件（godot_engine_diag.log / godot_ds_diag.log / godot_xc_diag.log）+ `Emulator.patched`（本机调试用：绕过模拟器 SN 文件检查的本地补丁版，位于 Emulator.app/Contents/emulator/，正式使用仍应走 DevEco GUI）。
+- **git 提交**：0ad2343 `feat(ohos): 第10轮修复 模拟器实测打通引擎启动（libraryname + surfaceId 路径）`
+
 ### 第 10 轮修复（模拟器实测排查，2026-08-15，提交 ac1f9ca）
 
 > 背景：用户在第 10 轮收尾后在模拟器实测发现「创建项目后链接/启动游戏引擎核心会卡住」。
