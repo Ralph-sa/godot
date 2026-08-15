@@ -300,6 +300,11 @@ static OHOS_XComponent *ohos_xcomponent = nullptr;
 static int window_init_width = 800;
 static int window_init_height = 600;
 
+// 渲染方法（默认 forward_plus，桌面编辑器标准路径）。
+// 模拟器/软件 Vulkan 环境可用 setRenderingMethod('mobile') 切换：
+// mobile 渲染器特性需求更少（无需 D16 采样等），对软件转译层更友好。
+static std::string g_rendering_method = "forward_plus";
+
 // 引擎线程（Main::iteration 循环）
 static std::thread engine_thread;
 static bool engine_running = false;
@@ -982,7 +987,7 @@ static void engine_thread_main() {
 		arg_strs.push_back("--rendering-driver");
 		arg_strs.push_back("vulkan");
 		arg_strs.push_back("--rendering-method");
-		arg_strs.push_back("forward_plus");
+		arg_strs.push_back(g_rendering_method);
 
 		if (first_run) {
 			first_run = false;
@@ -1278,6 +1283,26 @@ static napi_value engine_initialize(napi_env env, napi_callback_info info) {
 	return nullptr;
 }
 
+// 设置渲染方法（ArkTS: engine.setRenderingMethod('forward_plus' | 'mobile') -> void）
+// 需在 engine.start 之前调用。模拟器软件 Vulkan 转译层建议 'mobile'
+//（特性需求少：无需 D16 采样纹理等 forward_plus 特性）。
+static napi_value engine_set_rendering_method(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc >= 1) {
+		char buf[64] = { 0 };
+		size_t len = 0;
+		if (napi_get_value_string_utf8(env, args[0], buf, sizeof(buf) - 1, &len) == napi_ok && len > 0) {
+			if (String(buf) == "mobile" || String(buf) == "forward_plus") {
+				g_rendering_method = buf;
+				print_line(vformat("Godot Engine: rendering method set to %s", String(buf)));
+			}
+		}
+	}
+	return nullptr;
+}
+
 // 启动引擎（ArkTS: engine.start(width, height) -> void）
 static napi_value engine_start(napi_env env, napi_callback_info info) {
 	size_t argc = 2;
@@ -1368,6 +1393,7 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "initialize", nullptr, engine_initialize, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "setXComponent", nullptr, engine_set_xcomponent, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "start", nullptr, engine_start, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "setRenderingMethod", nullptr, engine_set_rendering_method, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "stop", nullptr, engine_stop, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "notifyFocus", nullptr, engine_notify_focus, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "registerClipboard", nullptr, engine_register_clipboard, nullptr, nullptr, nullptr, napi_default, nullptr },
@@ -1387,7 +1413,7 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "gamepadDevices", nullptr, engine_gamepad_devices, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 21, props);
+	napi_define_properties(env, exports, 22, props);
 	return exports;
 }
 

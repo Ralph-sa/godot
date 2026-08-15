@@ -89,6 +89,10 @@ struct Index {
           console.info('GodotOHOS setXComponent surfaceId path: ' + surfaceId);
           // Surface 就绪后启动 Godot 引擎
           if (!this.engineStarted) {
+            // 渲染方法：forward_plus 为桌面标准路径；模拟器软件 Vulkan
+            // 转译层（express_gpu）建议切 'mobile'（特性需求少、更稳定）。
+            // 真机 2in1 使用默认 forward_plus（不调用本接口即可）。
+            // godot.setRenderingMethod('mobile');
             // 初始化资源管理器（rawfile 读取，如导出的 main.pck）
             godot.initResourceManager(getContext(this).resourceManager);
             godot.initialize(this.getFilesDir(), this.getCacheDir(),
