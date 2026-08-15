@@ -52,6 +52,20 @@ interface_coverage: 88%
 - **验证**：scons 交叉编译通过 + hvigor BUILD SUCCESSFUL；运行时待模拟器恢复实测。
 - **git 提交**：f2a8c06 / 631d8c9
 
+### 第 10 轮修复（诊断增强，2026-08-16，提交 5b6e578）
+
+> 背景：模拟器为 DeviceDebuggable:No，hilog 全部隐私脱敏为 <private>，
+> 崩溃后只能靠 faultlog（仅系统域）定位——本轮把应用侧诊断通道补齐。
+
+- [x] **引擎日志写文件**：print handler 追加写 <cacheDir>/godot_engine.log
+  （[I]/[E] 前缀），崩溃后 hdc file recv 直接读取完整引擎日志；
+- [x] **崩溃信息写文件**：crash_handler 信号处理器尽力写
+  <cacheDir>/godot_crash.log（仅 open/write 等 async-signal-safe 操作，
+  el2/100 与 el2/base 双路径兜底）；
+- [x] run_verify.sh 诊断文件拉取更新为五件套（engine_diag / ds_diag /
+  xc_diag / engine.log / crash.log），路径改为实际沙盒路径。
+- **git 提交**：5b6e578
+
 ### 第 10 轮修复（文件对话框完整可用性，2026-08-16，提交 ec14f05 / 9c168b4 / 1d35c36）
 
 > 背景：遗留项 4（文件 URI 读取）与遗留项 6（文件对话框参数）——
