@@ -37,6 +37,21 @@ interface_coverage: 88%
   运行时行为待模拟器恢复后实测（模拟器自身转译层崩溃后需 DevEco GUI 重启）。
 - **git 提交**：3781062 `feat(ohos): 第10轮修复 ArkTS 事件桥（触摸/鼠标/键盘 NAPI 注入）`
 
+### 第 10 轮修复（渲染方法可配置 + 窗口尺寸同步，2026-08-15 深夜，提交 f2a8c06 / 631d8c9）
+
+> 背景：模拟器软件 Vulkan 转译层（express_gpu）对 forward_plus 特性支持不全
+> 且会自身崩溃；surfaceId 路径下窗口缩放无法通知引擎。
+
+- [x] **渲染方法可配置**：新增 `setRenderingMethod('forward_plus'|'mobile')` NAPI
+  （接口 21 → 22），默认 forward_plus 保持桌面基线；模拟器可切 mobile
+  （无需 D16 采样等特性，对软件转译层更友好）；Index.ets 留切换入口注释。
+- [x] **窗口尺寸同步桥**：新增 `injectResize(w,h)` NAPI（接口 22 → 23），
+  Index.ets `.onAreaChange` 回调（vp→px 换算）→ on_surface_changed →
+  notify_main_surface_resized → rect_changed（对应 macOS windowDidResize）；
+  修复 ArkTS 编译错误：Area.width/height 为 Length 联合类型需 Number() 转换。
+- **验证**：scons 交叉编译通过 + hvigor BUILD SUCCESSFUL；运行时待模拟器恢复实测。
+- **git 提交**：f2a8c06 / 631d8c9
+
 ### 第 10 轮修复（模拟器实测打通引擎启动，2026-08-15 晚，提交 0ad2343）
 
 > 背景：拿到模拟器实测机会后逐层排查「引擎启动即崩溃（SIGSEGV pc=0）」，

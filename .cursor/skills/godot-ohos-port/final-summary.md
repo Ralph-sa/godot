@@ -86,7 +86,7 @@ Index.ets（窗口/输入/系统服务桥）                main_ohos.cpp（NAPI
 - **对照**：macOS 平台导出插件（Xcode 工程模板）。
 
 ### 9. NAPI 桥（main_ohos.cpp / ohos_bridge.h）
-- 18 个导出接口：initialize / setXComponent / start / stop / notifyFocus / dispose / registerClipboard / registerFilePicker / filePickerResult / registerWindowHandler / initResourceManager / updateDisplays / registerSubWindowHandler / registerPointerHandler / registerCursorHandler / injectWheel / registerGamepadHandler / gamepadDevices。
+- 23 个导出接口：initialize / setXComponent / start / stop / notifyFocus / dispose / registerClipboard / registerFilePicker / filePickerResult / registerWindowHandler / initResourceManager / updateDisplays / registerSubWindowHandler / registerPointerHandler / registerCursorHandler / injectWheel / injectMouse / injectKey / injectTouch / injectResize / setRenderingMethod / registerGamepadHandler / gamepadDevices。（injectMouse/Key/Touch/Resize 与 setRenderingMethod 为第 10 轮修复新增：API 26 无 nativeXComponent 上下文后，输入与尺寸同步改走 ArkTS 事件桥；渲染方法可切 mobile 适配软件 Vulkan 环境。）
 - 跨线程回调均有 Mutex 保护，ArkTS ↔ C++ 双向事件流完整。
 
 ### 10. ArkTS 宿主（deveco/）
