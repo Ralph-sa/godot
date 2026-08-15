@@ -701,6 +701,29 @@ static napi_value engine_inject_key(napi_env env, napi_callback_info info) {
 	return nullptr;
 }
 
+// injectResize(width, height) -> void
+// ArkTS 组件尺寸变化（onAreaChange）经本接口同步到引擎：surfaceId 路径下
+// 无原生 OnSurfaceChanged 回调，窗口缩放（2in1 窗口化/旋转）需 ArkTS 通知。
+// 参数为 px（ArkTS 侧已乘密度换算）。
+static napi_value engine_inject_resize(napi_env env, napi_callback_info info) {
+	size_t argc = 2;
+	napi_value args[2];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	int w = 0;
+	int h = 0;
+	if (argc >= 1) {
+		napi_get_value_int32(env, args[0], &w);
+	}
+	if (argc >= 2) {
+		napi_get_value_int32(env, args[1], &h);
+	}
+	OHOS_XComponent *xc = OHOS_XComponent::get_instance();
+	if (xc && w > 0 && h > 0) {
+		xc->on_surface_changed(w, h);
+	}
+	return nullptr;
+}
+
 // injectTouch(type, id, x, y) -> void
 //   type: 0=按下 1=移动 2=抬起 3=取消（TouchType 对齐）
 static napi_value engine_inject_touch(napi_env env, napi_callback_info info) {
@@ -1409,11 +1432,12 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "injectMouse", nullptr, engine_inject_mouse, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "injectKey", nullptr, engine_inject_key, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "injectTouch", nullptr, engine_inject_touch, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "injectResize", nullptr, engine_inject_resize, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "registerGamepadHandler", nullptr, engine_register_gamepad_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "gamepadDevices", nullptr, engine_gamepad_devices, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 22, props);
+	napi_define_properties(env, exports, 23, props);
 	return exports;
 }
 

@@ -142,6 +142,17 @@ struct Index {
           godot.injectKey(event.keyCode, pressed);
           event.stopPropagation();
         })
+        .onAreaChange((oldArea: Area, newArea: Area) => {
+          // 第 10 轮修复：surfaceId 路径无原生 OnSurfaceChanged 回调，
+          // 组件尺寸变化（窗口缩放/旋转）经本回调同步引擎（vp -> px）。
+          // Area.width/height 为 Length 联合类型，需 Number() 转换后运算。
+          let density: number = this.getScreenDensity();
+          let w: number = Math.round(Number(newArea.width) * density);
+          let h: number = Math.round(Number(newArea.height) * density);
+          if (w > 0 && h > 0) {
+            godot.injectResize(w, h);
+          }
+        })
         .onAppear(() => {
           // 页面出现：注册剪贴板回调 + 文件选择器处理（@ohos.pasteboard / @ohos.file.picker）
           godot.registerClipboard(
