@@ -74,8 +74,11 @@ wait "$HILOG_PID" 2>/dev/null
 # 6. 拉取诊断文件
 log "拉取引擎诊断文件..."
 for p in \
-    "/data/storage/el2/base/haps/entry/cache/godot_engine_diag.log" \
-    "/data/storage/el2/base/haps/entry/cache/godot_ds_diag.log" ; do
+    "/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_engine_diag.log" \
+    "/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_ds_diag.log" \
+    "/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_xc_diag.log" \
+    "/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_engine.log" \
+    "/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_crash.log" ; do
     base=$(basename "$p")
     hdc file recv "$p" "$OUT_DIR/$base" >/dev/null 2>&1 && log "  得到 $base"
 done

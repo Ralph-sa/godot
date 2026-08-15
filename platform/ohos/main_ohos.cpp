@@ -85,18 +85,30 @@
 // 全局崩溃处理器（initialize 时注册）
 static CrashHandlerOHOS crash_handler;
 
-// ---- 引擎日志桥接 hilog（诊断用）----
+// 前置声明（print handler 需要写沙盒诊断文件，定义在本文件后部）
+static std::string sandbox_cache_dir;
+
+// ---- 引擎日志桥接 hilog + 诊断文件（诊断用）----
 // 鸿蒙应用无 stdout/stderr 终端，Godot print_line/print_error 输出需转发到
 // hilog 才能通过 hdc shell hilog 查看（print_string.h 的 print handler 机制）。
 static PrintHandlerList ohos_print_handler;
 static ErrorHandlerList ohos_error_handler;
 
 static void ohos_print_func(void *p_userdata, const String &p_string, bool p_error, bool p_rich) {
-	// 转印到 hilog（LOG_APP 域），便于 hdc 抓取引擎初始化/渲染日志
+	// 转印到 hilog（LOG_APP 域），便于 hdc 抓取引擎初始化/渲染日志。
+	// 同时追加写诊断文件：DeviceDebuggable:No 设备上 hilog 会隐私脱敏为
+	// <private>，崩溃后引擎日志只能从诊断文件读取。
 	if (p_error) {
 		OH_LOG_Print(LOG_APP, LOG_ERROR, OHOS_LOG_DOMAIN, OHOS_LOG_TAG, "%.*s", (int)p_string.length(), p_string.utf8().get_data());
 	} else {
 		OH_LOG_Print(LOG_APP, LOG_INFO, OHOS_LOG_DOMAIN, OHOS_LOG_TAG, "%.*s", (int)p_string.length(), p_string.utf8().get_data());
+	}
+	if (!sandbox_cache_dir.empty()) {
+		FILE *f = fopen((sandbox_cache_dir + "/godot_engine.log").c_str(), "a");
+		if (f) {
+			fprintf(f, "%s%s\n", p_error ? "[E] " : "[I] ", p_string.utf8().get_data());
+			fclose(f);
+		}
 	}
 }
 
@@ -289,9 +301,8 @@ static void ohos_tsfn_str(napi_env p_env, napi_ref p_fn_ref, const String &p_val
 	(void)ohos_tsfn_invoke(p_env, p_fn_ref, args, false);
 }
 
-// NAPI 侧注入的沙盒路径
+// NAPI 侧注入的沙盒路径（sandbox_cache_dir 定义在文件前部，供日志桥使用）
 static std::string sandbox_files_dir;
-static std::string sandbox_cache_dir;
 
 // XComponent 宿主（编辑器主窗口，由 engine_set_xcomponent 创建）
 static OHOS_XComponent *ohos_xcomponent = nullptr;

@@ -34,8 +34,12 @@
 #include "core/variant/variant.h"
 
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <hilog/log.h>
 
@@ -53,10 +57,30 @@ static const int crash_signals[] = {
 };
 
 static void handle_crash(int p_signal) {
-	// 崩溃信号处理：先还原默认行为（避免递归崩溃），再输出 hilog 日志
+	// 崩溃信号处理：先还原默认行为（避免递归崩溃），再输出 hilog 日志。
+	// 同时写诊断文件：DeviceDebuggable:No 设备 hilog 被隐私脱敏，
+	// 崩溃信息只能从 faultlog（hiview）或本文件读取。
 	const char *sig_name = strsignal(p_signal);
 	OH_LOG_Print(LOG_APP, LOG_FATAL, OHOS_LOG_DOMAIN, OHOS_LOG_TAG,
 			"Godot crashed with signal %d (%s)", p_signal, sig_name ? sig_name : "unknown");
+
+	// 尽力写诊断文件（信号处理器内只允许 async-signal-safe 操作，
+	// open/write 为安全操作；失败静默忽略）
+	int fd = open("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_crash.log",
+			O_WRONLY | O_CREAT | O_APPEND, 0644);
+	if (fd < 0) {
+		fd = open("/data/storage/el2/base/haps/entry/cache/godot_crash.log",
+				O_WRONLY | O_CREAT | O_APPEND, 0644);
+	}
+	if (fd >= 0) {
+		char buf[256];
+		int n = snprintf(buf, sizeof(buf), "Godot crashed with signal %d (%s)\n",
+				p_signal, sig_name ? sig_name : "unknown");
+		if (n > 0) {
+			(void)write(fd, buf, (size_t)n);
+		}
+		close(fd);
+	}
 
 	// 恢复默认信号处理，重新抛出以生成系统崩溃转储（core dump / 系统崩溃捕获）
 	for (int sig : crash_signals) {
