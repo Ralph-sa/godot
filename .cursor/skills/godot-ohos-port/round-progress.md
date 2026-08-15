@@ -52,6 +52,29 @@ interface_coverage: 88%
 - **验证**：scons 交叉编译通过 + hvigor BUILD SUCCESSFUL；运行时待模拟器恢复实测。
 - **git 提交**：f2a8c06 / 631d8c9
 
+### 第 10 轮修复（文件对话框完整可用性，2026-08-16，提交 ec14f05 / 9c168b4 / 1d35c36）
+
+> 背景：遗留项 4（文件 URI 读取）与遗留项 6（文件对话框参数）——
+> 系统文件选择器返回公共目录 URI（file://docs/...），引擎 FileAccess
+> 只能访问沙盒路径，此前选择的文件无法打开。
+
+- [x] **打开模式 URI 沙盒化**：选择后把文件/目录递归拷贝到
+  <cacheDir>/imports/（重名自动追加序号），回传沙盒真实路径；
+  目录用 fs.listFileSync+statSync 递归、文件用 fs.copyFileSync；
+  拷贝失败回退原 URI（不丢结果）。
+- [x] **保存模式回拷**：save 回传沙盒 <cacheDir>/exports/<name> 供引擎
+  写入，记录「沙盒路径 -> 目标 URI」映射，flushPendingExports 在下次
+  对话框操作与页面销毁（onDestroy）时把引擎已写入的文件写回用户
+  选择的公共目录位置（文件不存在=用户取消，跳过）。
+- [x] **过滤器透传**：Godot 过滤器（"*.png, *.jpg" / 分号分隔）解析为
+  逗号分隔后缀串（字母数字校验+去重）经 tsfn 传 ArkTS，转换为
+  DocumentSelectOptions.fileSuffixFilters（初始目录受系统限制无法指定）。
+- [x] 核对：项目管理器默认项目创建路径 = get_system_dir(DOCUMENTS)
+  = 沙盒 filesDir，创建项目可写。
+- **验证**：scons 交叉编译通过 + hvigor BUILD SUCCESSFUL；运行时待模拟器
+  恢复实测。
+- **git 提交**：ec14f05 / 9c168b4 / 1d35c36
+
 ### 第 10 轮修复（模拟器实测打通引擎启动，2026-08-15 晚，提交 0ad2343）
 
 > 背景：拿到模拟器实测机会后逐层排查「引擎启动即崩溃（SIGSEGV pc=0）」，
