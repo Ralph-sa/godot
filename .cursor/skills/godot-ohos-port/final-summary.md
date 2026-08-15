@@ -127,6 +127,11 @@ macOS 平台对照基线：约 16,229 行（.mm/.h）。
 
 ## 八、已知限制与遗留联调项
 
+> **2026-08-15 修复记录（提交 ac1f9ca）**：模拟器实测发现的「创建项目后引擎核心卡住/崩溃」已修复——
+> 1) Vulkan 渲染上下文在 DisplayServerOHOS 构造中初始化（原空指针崩溃）；2) 跨线程 NAPI 调用改 tsfn（原 ecma_vm 多线程断言）；
+> 3) **项目打开改进程内重启**（OS_OHOS::create_instance，原 fork/exec 子进程无 Ability 上下文而卡死——卡住主因）。
+> 模拟器全流程验证待执行：`cd platform/ohos/deveco && ./run_verify.sh`（模拟器需从 DevEco Studio Device Manager GUI 启动）。
+
 1. **真实设备/模拟器联调**：Vulkan 渲染、IME 候选框、手柄摇杆、音频出声、触控板手感、文件授权跨会话，均需 DevEco 模拟器（MateBook Pro 26）或真机验证——交叉编译通过 ≠ 运行时验证。
 2. **手柄摇杆轴**：`@ohos.multimodalInput.inputDevice` 无摇杆轴数据 API（仅按键/连接枚举），轴映射待系统能力或虚拟 HID。
 3. **Vulkan surface 重建**：`native_window` 变化（如旋转/尺寸剧变）的 surface 重建链待真机验证（swapchain 过期已由引擎自动处理）。
@@ -149,11 +154,12 @@ cp bin/libgodot.ohos.editor.arm64.so platform/ohos/deveco/entry/libs/arm64-v8a/l
 
 # 2. 一键构建 HAP（自动探测 DevEco Studio 26.0.0 的 SDK/JRE/hvigor）
 cd platform/ohos/deveco
-./build_hap.sh                # 产物：entry/build/default/outputs/default/entry-default-unsigned.hap
+./build_hap.sh                # 产物：entry/build/default/outputs/default/entry-default-signed.hap
+                              #（build-profile.json5 已配置 debug 签名）
 
-# 3. 签名与部署
-#    - 真机/模拟器安装需先在 DevEco Studio 配置自动签名（Signing Configs）
-#    - 部署：hdc install -r entry-default-unsigned.hap && hdc shell aa start -b <bundleName> -a <abilityName>
+# 3. 模拟器验证（模拟器需先由 DevEco Studio Device Manager GUI 启动）
+./run_verify.sh               # 安装 + 启动 + 截屏 + hilog + 拉取 cacheDir 诊断文件
+                              # 诊断文件：<cacheDir>/godot_engine_diag.log、godot_ds_diag.log
 
 # 4. 导出游戏：Godot 编辑器 File > Export，选 HarmonyOS 平台（export 插件）
 ```

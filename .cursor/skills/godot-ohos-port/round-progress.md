@@ -19,6 +19,26 @@ interface_coverage: 88%
 
 ## 轮次记录
 
+### 第 10 轮修复（模拟器实测排查，2026-08-15，提交 ac1f9ca）
+
+> 背景：用户在第 10 轮收尾后在模拟器实测发现「创建项目后链接/启动游戏引擎核心会卡住」。
+> 本轮为收尾后的缺陷修复迭代：定位根因 + 修复 + 构建验证 + 准备模拟器验证脚本。
+
+- **已知问题**：运行模拟器，项目管理器可显示/可创建项目，但打开项目（创建并编辑）时引擎核心卡住（此前版本为 SIGSEGV 崩溃，见 crash_latest.log：pc=0 null deref @ libgodot.so）。
+- **根因分析**：
+  1. **崩溃根因（已修复于本轮未提交改动中）**：DisplayServerOHOS 构造未初始化 Vulkan 渲染上下文/设备 → `RendererCompositor::create()` 返回 nullptr → 渲染服务器空指针崩溃；引擎线程直接 napi_call_function → EcmaVM 多线程断言（SIGABRT）；`FileAccess::exists` 在 initialize_core 前调用 → 空 create_func 崩溃。
+  2. **卡住根因（本轮修复）**：ProjectManager 打开项目走 `OS::get_singleton()->create_instance()` → OS_Unix 默认 fork()+execvp(/proc/self/exe)。鸿蒙 App 进程由 appspawn 创建，fork 出的子进程没有 Ability/ACE 运行时上下文，编辑器实例启动失败/黑屏 → 表现为「卡住」。
+- **修复内容**：
+  - [x] `OS_OHOS::create_instance/create_process` 改进程内重启（pending 参数 + restart_on_exit），`engine_thread_main` 支持 Main::cleanup 后以新参数（--path <proj> --editor）重新 setup+start，等价桌面端新进程语义
+  - [x] DisplayServer/音频驱动注册防重复（进程内重启时静态表不清理，防 MAX_SERVERS/MAX_DRIVERS 耗尽）
+  - [x] tsfn 同步调用有界等待 2s + shared promise（防 JS↔引擎互等死锁/悬垂）
+  - [x] 关键路径诊断文件改用应用沙盒 cacheDir（原硬编码 /data/storage/el2/base/cache 沙盒外不可写）
+  - [x] hilog domain 修正（0xD001）、DevEco 工程 debug 签名、build_hap.sh 支持 signed.hap
+  - [x] 新增 `platform/ohos/deveco/run_verify.sh` 模拟器验证脚本（安装/启动/截图/hilog/诊断文件拉取）
+- **验证**：check_build real 交叉编译通过；HAP 重打包验证产物内含最新引擎库（hash 比对 llvm-strip --strip-all 一致）。
+- **遗留（需模拟器/真机）**：模拟器实测全流程（项目管理器 → 创建项目 → 编辑器打开渲染）。命令行 Emulator 无法启动（DevEco 设备管理器写入的一次性 SN 文件被 macOS 临时目录清理，仅能从 DevEco Studio GUI 启动模拟器）。
+- **git 提交**：ac1f9ca `feat(ohos): 第10轮修复 模拟器启动链路 + 进程内重启打开项目`
+
 ### 第 10 轮（已完成）
 
 - **管理者 tasklist**：

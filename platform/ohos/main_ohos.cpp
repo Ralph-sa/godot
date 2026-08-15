@@ -46,9 +46,11 @@
 
 #include <napi/native_api.h>
 #include <node_api.h>
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <thread>
 #include <future>
@@ -124,7 +126,9 @@ struct OHOS_TSFNArg {
 struct OHOS_TSFNCall {
 	napi_ref fn_ref = nullptr;                  // 目标 JS 函数引用（call_js_cb 内解析）
 	Vector<OHOS_TSFNArg> args;                  // 参数列表（0~8）
-	std::promise<std::string> *done_str = nullptr; // 非空时阻塞等待 JS 返回字符串
+	// 非空时阻塞等待 JS 返回字符串。shared_ptr 保证引擎线程超时返回后，
+	// JS 侧回调仍能安全 set_value（避免栈上 promise 悬垂）
+	std::shared_ptr<std::promise<std::string>> done_str;
 };
 
 // JS 主线程回调：解析参数并调用目标函数（tsfn 的 call_js_cb，运行在 JS 主线程）
@@ -211,11 +215,10 @@ static String ohos_tsfn_invoke(napi_env p_env, napi_ref p_fn_ref, const Vector<O
 	OHOS_TSFNCall *call = memnew(OHOS_TSFNCall);
 	call->fn_ref = p_fn_ref;
 	call->args = p_args;
-	std::promise<std::string> done_str;
 	std::future<std::string> fut;
 	if (p_sync) {
-		call->done_str = &done_str;
-		fut = done_str.get_future();
+		call->done_str = std::make_shared<std::promise<std::string>>();
+		fut = call->done_str->get_future();
 	}
 	napi_status st = napi_call_threadsafe_function(ohos_tsfn, call, p_sync ? napi_tsfn_blocking : napi_tsfn_nonblocking);
 	if (st != napi_ok) {
@@ -223,6 +226,12 @@ static String ohos_tsfn_invoke(napi_env p_env, napi_ref p_fn_ref, const Vector<O
 		return String();
 	}
 	if (p_sync) {
+		// 有界等待（2s）：若 JS 主线程被占住（例如引擎 stop 时 ArkUI 主线程
+		// 正在 join 引擎线程），无限等待会形成 JS↔引擎互等死锁。超时返回空串
+		//（剪贴板读取失败语义，可接受）。
+		if (fut.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
+			return String();
+		}
 		std::string s = fut.get();
 		return String::utf8(s.c_str());
 	}
