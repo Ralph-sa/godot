@@ -125,6 +125,42 @@ void OHOS_XComponent::focus_event_cb(OH_NativeXComponent *component, void *windo
 	}
 }
 
+// ---- SurfaceId 路径（第 10 轮修复：API 26 无 nativeXComponent 上下文） ----
+
+void OHOS_XComponent::set_native_window_from_surface_id(uint64_t p_surface_id, int p_width, int p_height) {
+	// ArkTS getXComponentSurfaceId() 返回 surfaceId 字符串，native 侧直接创建
+	// OHNativeWindow（对应 OnSurfaceCreated 回调里的 window 参数），绕过
+	// OH_NativeXComponent 上下文传递（API 26 已不提供 nativeXComponent 属性）。
+	OHNativeWindow *win = nullptr;
+	int32_t ret = OH_NativeWindow_CreateNativeWindowFromSurfaceId(p_surface_id, &win);
+	if (ret == 0 && win) {
+		// 手动创建的 OHNativeWindow 未初始化 buffer geometry：
+		// Vulkan vkGetPhysicalDeviceSurfaceCapabilitiesKHR/vkCreateSwapchainKHR
+		// 需要窗口具备有效宽高，否则交换链创建失败（屏幕无交换链导致
+		// screen_prepare_for_drawing 报错、渲染路径空指针崩溃）。
+		// 格式/用途由系统为 surface 窗口默认设置，无需额外指定。
+		OH_NativeWindow_NativeWindowHandleOpt(win, SET_BUFFER_GEOMETRY, p_width, p_height);
+	}
+	// 结果写诊断文件（引擎打印链未注册前 print_verbose 行为不确定，
+	// 且诊断文件在崩溃后仍可 hdc file recv 读取）
+	{
+		FILE *f = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_xc_diag.log", "a");
+		if (f) {
+			fprintf(f, "CreateNativeWindowFromSurfaceId(%llu) -> %d, win=%p\n",
+					(unsigned long long)p_surface_id, ret, (void *)win);
+			fclose(f);
+		}
+	}
+	if (ret == 0 && win) {
+		native_window = win;
+		size = Size2i(p_width, p_height);
+		surface_ready = true;
+	} else {
+		// 创建失败：保持 surface_ready=false，引擎线程按未就绪节流并重试
+		surface_ready = false;
+	}
+}
+
 // ---- Surface 生命周期 ----
 
 void OHOS_XComponent::on_surface_created(OH_NativeXComponent *p_component, OHNativeWindow *p_window) {

@@ -124,6 +124,13 @@ public:
 	// 设置 OH_NativeXComponent 句柄（从 ArkTS XComponent onLoad 上下文获取）
 	void set_xcomponent(OH_NativeXComponent *p_xc) { native_xcomponent = p_xc; }
 
+	// ---- SurfaceId 路径（第 10 轮修复） ----
+	// API 26 上 onLoad 上下文不再携带 nativeXComponent（实测属性为 undefined），
+	// 改走 surfaceId：ArkTS 侧 getXComponentSurfaceId() 传字符串，native 侧用
+	// OH_NativeWindow_CreateNativeWindowFromSurfaceId 直接创建窗口（Vulkan 只需
+	// OHNativeWindow）。输入事件后续经 ArkTS onTouch/onMouse 桥注入。
+	void set_native_window_from_surface_id(uint64_t p_surface_id, int p_width, int p_height);
+
 	// ---- 输入事件处理（由静态回调调用，运行在 ArkUI 主线程） ----
 	void handle_touch_event(OH_NativeXComponent *p_component, void *p_window);
 	void handle_mouse_event(OH_NativeXComponent *p_component, void *p_window);

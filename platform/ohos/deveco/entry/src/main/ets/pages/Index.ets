@@ -64,17 +64,29 @@ struct Index {
 
   build() {
     Column() {
-      // 全屏 XComponent：类型 SURFACE，用于承载 Vulkan 渲染
+      // 全屏 XComponent：类型 SURFACE，用于承载 Vulkan 渲染。
+      // libraryname 必须指定（本应用的 native 库 libgodot.so -> 'godot'）：
+      // 未指定时 onLoad 回调的 context 为 undefined（实测 emulator 7.0.0.23），
+      // 拿不到 nativeXComponent -> OHOS_XComponent 无法创建 -> Vulkan surface
+      // 创建失败 -> 引擎渲染服务器空指针崩溃。
       XComponent({
         id: 'godot_surface',
         type: XComponentType.SURFACE,
+        libraryname: 'godot',
         controller: this.xcomponentController
       })
         .onLoad((context?: object) => {
-          // XComponent 加载：把 native 上下文传给 C++（注册输入事件回调）
-          if (context != undefined) {
-            godot.setXComponent(context);
-          }
+          // XComponent 加载：把 native 上下文传给 C++（注册输入事件回调）。
+          // 部分设备/API 版本 onLoad 回调参数可能为空：兜底从 controller 获取
+          //（XComponentController.getXComponentContext() 返回与回调参数相同的上下文）。
+          console.info('GodotOHOS onLoad fired, context=' + context);
+          // API 26：onLoad 上下文不含 nativeXComponent（实测属性为 undefined），
+          // 统一走 surfaceId 路径：native 侧用
+          // OH_NativeWindow_CreateNativeWindowFromSurfaceId 直接创建渲染窗口，
+          // 不再依赖 OH_NativeXComponent 上下文对象。
+          let surfaceId: string = this.xcomponentController.getXComponentSurfaceId();
+          godot.setXComponent(surfaceId, this.getScreenWidth(), this.getScreenHeight());
+          console.info('GodotOHOS setXComponent surfaceId path: ' + surfaceId);
           // Surface 就绪后启动 Godot 引擎
           if (!this.engineStarted) {
             // 初始化资源管理器（rawfile 读取，如导出的 main.pck）

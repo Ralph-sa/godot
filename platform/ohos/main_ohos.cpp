@@ -100,9 +100,25 @@ static void ohos_print_func(void *p_userdata, const String &p_string, bool p_err
 	}
 }
 
+// 错误同时写诊断文件（hilog 在 DeviceDebuggable:No 设备上会被隐私脱敏成 <private>，
+// 诊断文件 hdc file recv 可读原文）
+static void ohos_diag_file_write(const char *p_line) {
+	FILE *f = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_engine_diag.log", "a");
+	if (!f) {
+		f = fopen("/data/storage/el2/base/haps/entry/cache/godot_engine_diag.log", "a");
+	}
+	if (f) {
+		fprintf(f, "%s\n", p_line);
+		fclose(f);
+	}
+}
+
 static void ohos_error_func(void *p_userdata, const char *p_func, const char *p_file, int p_line, const char *p_error, const char *p_descr, bool p_editor_notify, ErrorHandlerType p_type) {
 	OH_LOG_Print(LOG_APP, LOG_FATAL, OHOS_LOG_DOMAIN, OHOS_LOG_TAG,
 			"ERR[%s] %s:%d: %s\n  %s", p_func, p_file, p_line, p_error, p_descr ? p_descr : "");
+	char buf[2048];
+	snprintf(buf, sizeof(buf), "ERR[%s] %s:%d: %s  |  %s", p_func, p_file, p_line, p_error, p_descr ? p_descr : "");
+	ohos_diag_file_write(buf);
 }
 
 // ---- 通用跨线程 JS 调用调度器（第 10 轮修复）----
@@ -279,6 +295,10 @@ static std::string sandbox_cache_dir;
 
 // XComponent 宿主（编辑器主窗口，由 engine_set_xcomponent 创建）
 static OHOS_XComponent *ohos_xcomponent = nullptr;
+
+// 引擎启动时 ArkTS 传入的窗口尺寸（surfaceId 路径创建 OHNativeWindow 用）
+static int window_init_width = 800;
+static int window_init_height = 600;
 
 // 引擎线程（Main::iteration 循环）
 static std::thread engine_thread;
@@ -855,9 +875,14 @@ static void engine_thread_main() {
 			for (int i = 0; i < 200 && !ohos_xcomponent->is_surface_ready(); i++) {
 				std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 最多等 10s
 			}
+			char sbuf[128];
+			snprintf(sbuf, sizeof(sbuf), "engine_thread: surface ready = %d (run %d)", (int)ohos_xcomponent->is_surface_ready(), first_run ? 1 : 2);
+			ohos_engine_diag("%s", sbuf);
 			// 注意：LOG_APP 域 + 合法 domain；faultlog 只含系统 core 域，
 			// 关键路径另有文件日志（display_server_ohos.cpp 的 ohos_diag_log）
-			OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "engine_thread: surface ready = %d (run %d)", (int)ohos_xcomponent->is_surface_ready(), first_run ? 1 : 2);
+			OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "%s", sbuf);
+		} else {
+			ohos_engine_diag("engine_thread: ohos_xcomponent == NULL (setXComponent not done)");
 		}
 
 		std::vector<std::string> arg_strs;
@@ -954,24 +979,140 @@ static void engine_thread_main() {
 // 从 XComponent onLoad 回调的 context 中取 OH_NativeXComponent 句柄，
 // 创建 OHOS_XComponent 并注册 surface/touch/mouse/key 事件回调。
 static napi_value engine_set_xcomponent(napi_env env, napi_callback_info info) {
-	size_t argc = 1;
-	napi_value args[1];
+	size_t argc = 3;
+	napi_value args[3];
 	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	ohos_diag_file_write("setXComponent: called");
 	if (argc < 1) {
+		ohos_diag_file_write("setXComponent: argc < 1, abort");
+		return nullptr;
+	}
+	// 可选参数：宽高（surfaceId 路径创建窗口时设置尺寸）
+	int sid_width = window_init_width;
+	int sid_height = window_init_height;
+	if (argc >= 2) {
+		napi_get_value_int32(env, args[1], &sid_width);
+	}
+	if (argc >= 3) {
+		napi_get_value_int32(env, args[2], &sid_height);
+	}
+
+	// ---- SurfaceId 路径（第 10 轮修复，优先） ----
+	// API 26 上 onLoad 上下文无 nativeXComponent（实测 typeof=undefined），
+	// ArkTS 侧改传 getXComponentSurfaceId() 字符串：
+	//   1) napi 值若为 string/number → 解析 surfaceId →
+	//      OH_NativeWindow_CreateNativeWindowFromSurfaceId 直接创建窗口；
+	//   2) 若为 object（旧版设备）→ 走原 napi_unwrap/external 兼容路径。
+	char sidbuf[128] = { 0 };
+	size_t sidlen = 0;
+	bool is_sid = false;
+	napi_valuetype arg_vt = napi_undefined;
+	napi_typeof(env, args[0], &arg_vt);
+	if (arg_vt == napi_string) {
+		is_sid = (napi_get_value_string_utf8(env, args[0], sidbuf, sizeof(sidbuf) - 1, &sidlen) == napi_ok);
+	} else if (arg_vt == napi_number || arg_vt == napi_bigint) {
+		uint64_t sidnum = 0;
+		if (arg_vt == napi_number) {
+			double dv = 0;
+			napi_get_value_double(env, args[0], &dv);
+			sidnum = static_cast<uint64_t>(dv);
+		} else {
+			napi_get_value_bigint_uint64(env, args[0], &sidnum, nullptr);
+		}
+		snprintf(sidbuf, sizeof(sidbuf), "%llu", (unsigned long long)sidnum);
+		is_sid = true;
+	}
+	if (is_sid) {
+		uint64_t surface_id = strtoull(sidbuf, nullptr, 10);
+		char dbg[160];
+		snprintf(dbg, sizeof(dbg), "setXComponent: surfaceId path, sid='%s' (%llu)", sidbuf, (unsigned long long)surface_id);
+		ohos_diag_file_write(dbg);
+		if (!ohos_xcomponent) {
+			ohos_xcomponent = memnew(OHOS_XComponent);
+		}
+		// 尺寸取 ArkTS 传入的宽高（surface 实际尺寸由后续桥同步）
+		ohos_xcomponent->set_native_window_from_surface_id(surface_id, sid_width, sid_height);
+		ohos_diag_file_write("setXComponent: surfaceId path done");
+		OH_LOG_Print(LOG_APP, LOG_INFO, OHOS_LOG_DOMAIN, OHOS_LOG_TAG, "setXComponent: surfaceId=%llu OK", (unsigned long long)surface_id);
 		return nullptr;
 	}
 
-	// context.nativeXComponent 为 XComponentNativeInstance，unrap 得到原生句柄
+	// context.nativeXComponent 在不同 API 版本的包装方式不同：
+	//  - 旧版：napi_wrap 包装对象，用 napi_unwrap 解包；
+	//  - 新版（API 12+）：napi_create_external 创建，用 napi_get_value_external 获取；
+	//  - 部分版本：BigInt/数字直接承载指针。
+	// 依次尝试（第 10 轮修复：API 26 上 napi_unwrap 返回 invalid_arg）。
 	napi_value native_xcomponent_val = nullptr;
-	napi_get_named_property(env, args[0], "nativeXComponent", &native_xcomponent_val);
+	napi_status st = napi_get_named_property(env, args[0], "nativeXComponent", &native_xcomponent_val);
+	char buf[256];
+	snprintf(buf, sizeof(buf), "setXComponent: get_named_property st=%d val=%p", (int)st, (void *)native_xcomponent_val);
+	ohos_diag_file_write(buf);
 	OH_NativeXComponent *native_xcomponent = nullptr;
 	if (native_xcomponent_val != nullptr) {
-		napi_unwrap(env, native_xcomponent_val, reinterpret_cast<void **>(&native_xcomponent));
+		napi_status st2 = napi_unwrap(env, native_xcomponent_val, reinterpret_cast<void **>(&native_xcomponent));
+		snprintf(buf, sizeof(buf), "setXComponent: napi_unwrap st=%d xc=%p", (int)st2, (void *)native_xcomponent);
+		ohos_diag_file_write(buf);
+		if (!native_xcomponent) {
+			// 新版：external 包装
+			napi_status st3 = napi_get_value_external(env, native_xcomponent_val, reinterpret_cast<void **>(&native_xcomponent));
+			snprintf(buf, sizeof(buf), "setXComponent: napi_get_value_external st=%d xc=%p", (int)st3, (void *)native_xcomponent);
+			ohos_diag_file_write(buf);
+		}
+		if (!native_xcomponent) {
+			// 诊断：打印对象类型与全部属性名/值（定位 API 26 的包装结构）
+			{
+				napi_valuetype vtd = napi_undefined;
+				napi_typeof(env, native_xcomponent_val, &vtd);
+				snprintf(buf, sizeof(buf), "setXComponent: typeof=%d (obj=6 ext=7 num=4 bigint=9)", (int)vtd);
+				ohos_diag_file_write(buf);
+				napi_value prop_names = nullptr;
+				if (napi_get_property_names(env, native_xcomponent_val, &prop_names) == napi_ok) {
+					uint32_t plen = 0;
+					napi_get_array_length(env, prop_names, &plen);
+					snprintf(buf, sizeof(buf), "setXComponent: prop count=%u", plen);
+					ohos_diag_file_write(buf);
+					for (uint32_t i = 0; i < plen && i < 8; i++) {
+						napi_value pn = nullptr;
+						napi_value pv = nullptr;
+						if (napi_get_element(env, prop_names, i, &pn) == napi_ok &&
+								napi_get_property(env, native_xcomponent_val, pn, &pv) == napi_ok) {
+							char pnbuf[128] = { 0 };
+							size_t pnl = 0;
+							napi_get_value_string_utf8(env, pn, pnbuf, sizeof(pnbuf) - 1, &pnl);
+							napi_valuetype pvt = napi_undefined;
+							napi_typeof(env, pv, &pvt);
+							snprintf(buf, sizeof(buf), "setXComponent: prop[%u] '%s' typeof=%d", i, pnbuf, (int)pvt);
+							ohos_diag_file_write(buf);
+						}
+					}
+				}
+			}
+			// 兜底：BigInt/Number 直接承载指针
+			napi_valuetype vt = napi_undefined;
+			bool is_num = (napi_typeof(env, native_xcomponent_val, &vt) == napi_ok &&
+					(vt == napi_number || vt == napi_bigint));
+			if (is_num) {
+				uint64_t ptr = 0;
+				if (napi_get_value_bigint_uint64(env, native_xcomponent_val, &ptr, nullptr) != napi_ok) {
+					double dv = 0;
+					if (napi_get_value_double(env, native_xcomponent_val, &dv) == napi_ok) {
+						ptr = static_cast<uint64_t>(dv);
+					}
+				}
+				native_xcomponent = reinterpret_cast<OH_NativeXComponent *>(ptr);
+				snprintf(buf, sizeof(buf), "setXComponent: numeric fallback ptr=%llu", (unsigned long long)ptr);
+				ohos_diag_file_write(buf);
+			}
+		}
 	}
 	if (!native_xcomponent) {
+		snprintf(buf, sizeof(buf), "setXComponent: NO nativeXComponent (argc=%d)", (int)argc);
+		ohos_diag_file_write(buf);
 		OH_LOG_Print(LOG_APP, LOG_ERROR, OHOS_LOG_DOMAIN, OHOS_LOG_TAG, "setXComponent: no nativeXComponent");
 		return nullptr;
 	}
+	snprintf(buf, sizeof(buf), "setXComponent: native_xcomponent=%p OK", (void *)native_xcomponent);
+	ohos_diag_file_write(buf);
 
 	// 创建 XComponent 宿主（编辑器单 XComponent，复用已创建的实例）
 	if (!ohos_xcomponent) {
@@ -1065,6 +1206,9 @@ static napi_value engine_start(napi_env env, napi_callback_info info) {
 	if (argc >= 2) {
 		napi_get_value_int32(env, args[1], &height);
 	}
+	// 记录全局尺寸（surfaceId 路径在 setXComponent 时创建 OHNativeWindow 用）
+	window_init_width = width;
+	window_init_height = height;
 
 	// 提取 HAP rawfile 中的 main.pck 到沙盒（存在才提取；编辑器运行时可无）
 	String pack_dest = String::utf8(sandbox_files_dir.c_str()).path_join("main.pck");
