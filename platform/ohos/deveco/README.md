@@ -28,12 +28,23 @@ deveco/
 
 ## 状态
 
-- 第 1 轮（骨架期）：NAPI 入口（initialize/start/stop/dispose）+ XComponent 宿主已就绪；
-- 完善期待办：
-  - XComponent 输入事件分发（触摸/键鼠）接入 `DisplayServerOHOS`；
-  - Surface 尺寸变化同步（`on_surface_changed` → swapchain 重建）；
-  - 子窗口/浮层（编辑器工具面板）承载方案验证；
-  - 引擎静态库与完整编译链路打通。
+- 第 10 轮（收尾，提交 `ac1f9ca` / `2249012`）：全链路构建已打通（`build_hap.sh` 一键出 `entry-default-signed.hap`）；
+- 第 10 轮修复：模拟器「创建项目后引擎卡住」根因修复（Vulkan 上下文初始化 + tsfn 跨线程调用 + **项目打开改进程内重启**）；
+- 剩余：模拟器全流程实测（见下方「模拟器验证」）。
+
+## 模拟器验证
+
+```bash
+./build_hap.sh        # 1. 交叉编译产物已内置，直接构建签名 HAP
+./run_verify.sh       # 2. 安装+启动+截屏+hilog+诊断文件（需模拟器在线）
+```
+
+> **重要**：模拟器必须从 DevEco Studio 的 **Device Manager** 图形界面启动。
+> 命令行 `Emulator -start` 会因缺少一次性 SN 文件失败——该文件由 IDE 点击
+> 启动时写入系统临时目录（macOS 清理临时目录后必须重新用 GUI 启动）。
+>
+> 验证点：项目管理器显示 → 新建项目 → 「创建并编辑」→ 编辑器打开渲染
+> （进程内重启生效，不再卡住）。卡住时查看 `<cacheDir>/godot_engine_diag.log`。
 
 ## 线程模型
 
