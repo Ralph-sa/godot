@@ -423,7 +423,7 @@ static napi_value engine_file_picker_result(napi_env env, napi_callback_info inf
 	return nullptr;
 }
 
-Error ohos_pick_files(const String &p_title, int p_mode, const Callable &p_callback) {
+Error ohos_pick_files(const String &p_title, int p_mode, const Vector<String> &p_filters, const Callable &p_callback) {
 	// 保存回调并通知 ArkTS 打开系统文件选择器
 	MutexLock lock(picker_mutex);
 	if (!picker_env || !picker_handler_ref) {
@@ -433,6 +433,31 @@ Error ohos_pick_files(const String &p_title, int p_mode, const Callable &p_callb
 	}
 	picker_callback = p_callback;
 
+	// 过滤器转换：Godot "*.png, *.jpg" / "*.png ; *.jpg" -> 逗号分隔后缀串
+	// "png,jpg"（ArkTS DocumentSelectOptions.fileSuffixFilters 用后缀数组）。
+	String suffixes;
+	for (const String &filter : p_filters) {
+		Vector<String> tokens = filter.replace("*.", "").replace(";", ",").replace(" ", "").split(",");
+		for (const String &token : tokens) {
+			// 只接受字母数字后缀（最多 10 字符，防垃圾 token）
+			String ext = token.strip_edges();
+			if (ext.is_empty() || ext.length() > 10) {
+				continue;
+			}
+			bool valid = true;
+			for (int i = 0; i < ext.length(); i++) {
+				char32_t c = ext[i];
+				if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) {
+					valid = false;
+					break;
+				}
+			}
+			if (valid && !suffixes.split(",").has(ext)) {
+				suffixes = suffixes.is_empty() ? ext : suffixes + "," + ext;
+			}
+		}
+	}
+
 	// 经 tsfn 投递到 JS 主线程（引擎线程不能直接 napi_call_function）
 	Vector<OHOS_TSFNArg> args;
 	OHOS_TSFNArg a1;
@@ -441,8 +466,12 @@ Error ohos_pick_files(const String &p_title, int p_mode, const Callable &p_callb
 	OHOS_TSFNArg a2;
 	a2.type = OHOS_TSFNArg::Type::INT;
 	a2.i = p_mode;
+	OHOS_TSFNArg a3;
+	a3.type = OHOS_TSFNArg::Type::STRING;
+	a3.s = suffixes.utf8().get_data();
 	args.push_back(a1);
 	args.push_back(a2);
+	args.push_back(a3);
 	(void)ohos_tsfn_invoke(picker_env, picker_handler_ref, args, false);
 	return OK;
 }

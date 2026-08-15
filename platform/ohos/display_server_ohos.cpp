@@ -464,9 +464,9 @@ bool DisplayServerOHOS::clipboard_has() const {
 Error DisplayServerOHOS::file_dialog_show(const String &p_title, const String &p_current_directory, const String &p_filename, bool p_show_hidden, DisplayServerEnums::FileDialogMode p_mode, const Vector<String> &p_filters, const Callable &p_callback, DisplayServerEnums::WindowID p_window_id) {
 	// 系统文件选择器：经 NAPI 桥调 ArkTS DocumentViewPicker。
 	// 选择完成后 p_callback 收到 PackedStringArray（取消时为空）。
-	// （对应 macOS 的 NSSavePanel / NSOpenPanel；当前目录等参数由
-	// ArkTS 侧作为初始目录，简化实现仅透传标题与模式。）
-	return ohos_pick_files(p_title, static_cast<int>(p_mode), p_callback);
+	// （对应 macOS 的 NSSavePanel / NSOpenPanel；当前目录受系统限制
+	// 无法指定初始位置，过滤器透传后缀列表，见 ohos_pick_files。）
+	return ohos_pick_files(p_title, static_cast<int>(p_mode), p_filters, p_callback);
 }
 
 // ---- 窗口管理（骨架期默认实现） ----

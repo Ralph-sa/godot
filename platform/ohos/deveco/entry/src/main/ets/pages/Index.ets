@@ -168,8 +168,8 @@ struct Index {
             (): string => {
               return this.getClipboardText();
             });
-          godot.registerFilePicker((title: string, mode: number) => {
-            this.openFilePicker(title, mode);
+          godot.registerFilePicker((title: string, mode: number, suffixes: string) => {
+            this.openFilePicker(title, mode, suffixes);
           });
           godot.registerWindowHandler((mode: number) => {
             this.applyWindowMode(mode);
@@ -388,13 +388,26 @@ struct Index {
   }
 
   // 打开系统文件选择器，选择结果回传 C++（godot.filePickerResult）
-  private openFilePicker(title: string, mode: number): void {
+  private openFilePicker(title: string, mode: number, suffixes: string): void {
     // 上次保存的待回拷文件先写回目标 URI（引擎已完成写入）
     this.flushPendingExports();
     // FileDialogMode: 0 打开单文件 / 1 打开多文件 / 2 打开目录 / 3 打开任意 / 4 保存
+    // 过滤器（第 10 轮修复）：引擎侧逗号分隔后缀串 -> fileSuffixFilters 数组
     let pickerOptions: picker.DocumentSelectOptions = {
       maxSelectNumber: (mode == 1) ? 100 : 1,
     };
+    if (suffixes != undefined && suffixes.length > 0) {
+      let parts: string[] = suffixes.split(',');
+      let valid: string[] = [];
+      for (let i = 0; i < parts.length; i++) {
+        if (parts[i].length > 0) {
+          valid.push(parts[i]);
+        }
+      }
+      if (valid.length > 0) {
+        pickerOptions.fileSuffixFilters = valid;
+      }
+    }
     let documentPicker = new picker.DocumentViewPicker(getContext(this));
     let uriList: string[] = [];
     documentPicker.select(pickerOptions).then((uris: string[]) => {

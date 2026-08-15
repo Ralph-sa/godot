@@ -53,7 +53,7 @@ String ohos_clipboard_get_text();
 // p_mode 为 DisplayServerEnums::FileDialogMode（打开/保存等）。
 // 选择完成后在引擎线程调用 p_callback（参数为 PackedStringArray 路径列表；
 // 用户取消时为空数组）。立即返回 OK（异步）。
-Error ohos_pick_files(const String &p_title, int p_mode, const Callable &p_callback);
+Error ohos_pick_files(const String &p_title, int p_mode, const Vector<String> &p_filters, const Callable &p_callback);
 
 // 请求窗口模式切换（全屏/最大化/窗口化）。
 // p_mode 为 DisplayServerEnums::WindowMode；经 ArkTS @ohos.window 应用。
