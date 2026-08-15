@@ -146,6 +146,15 @@ public:
 	// 清空队列（引擎停止时避免残留事件）
 	void clear_input_events();
 
+	// ---- 输入注入（第 8 轮：输入法/触控板；第 10 轮修复：ArkTS 事件桥） ----
+	// surfaceId 路径下 OH_NativeXComponent 回调注册不可用（API 26 无
+	// nativeXComponent），触摸/鼠标/键盘改由 ArkTS 通用事件（onTouch/
+	// onMouse/onKeyEvent）经 NAPI 注入本队列，引擎线程 process_events 消费。
+	// 以下方法均在 ArkUI 主线程调用（入队有互斥保护）。
+	void push_mouse_event(int p_action, int p_button, const Vector2 &p_pos);
+	void push_key_event(int p_ohos_keycode, bool p_pressed);
+	void push_touch_event(int p_type, int p_id, const Vector2 &p_pos);
+
 	// ---- 输入注入（第 8 轮：输入法/触控板，主线程调用） ----
 	// 把一次按键入队到输入队列（IME 组合文本/删除/回车；ArkUI 主线程调用，
 	// 引擎线程 process_events 消费，保证线程安全）。

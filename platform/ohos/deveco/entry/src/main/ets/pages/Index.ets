@@ -112,9 +112,31 @@ struct Index {
           this.engineStarted = false;
         })
         .onTouch((event: TouchEvent) => {
-          // 触控板/触屏手势（第 8 轮）：双指滑动识别为滚轮事件注入引擎
-          // （XComponent 原生鼠标事件不携带滚轮；对应 macOS scrollWheel）
+          // 第 10 轮修复：surfaceId 路径下原生触摸回调不可用，
+          // ArkTS 通用触摸事件分两路注入引擎：
+          //  - 双指：触控板滚动手势（第 8 轮，注入滚轮事件）；
+          //  - 单指：触摸按下/移动/抬起（注入 InputEventScreenTouch/Drag）。
           this.handleTouchGesture(event);
+          this.injectTouchEvents(event);
+        })
+        .onMouse((event: MouseEvent) => {
+          // 第 10 轮修复：鼠标事件经 NAPI 注入引擎（原生鼠标回调不可用）。
+          // MouseAction: 1=按下 2=抬起 3=移动；MouseButton: 0=左 1=右 2=中。
+          let action: number = event.action;
+          let button: number = event.button;
+          if (event.action != MouseAction.Move) {
+            godot.injectMouse(action, event.x, event.y, button);
+          } else {
+            godot.injectMouse(3, event.x, event.y, button);
+          }
+          event.stopPropagation();
+        })
+        .onKeyEvent((event: KeyEvent) => {
+          // 第 10 轮修复：键盘事件经 NAPI 注入引擎（原生键盘回调不可用）。
+          // KeyType: 0=Down 1=Up；keyCode 为 @ohos.multimodalInput KeyCode。
+          let pressed: boolean = (event.type == KeyType.Down);
+          godot.injectKey(event.keyCode, pressed);
+          event.stopPropagation();
         })
         .onAppear(() => {
           // 页面出现：注册剪贴板回调 + 文件选择器处理（@ohos.pasteboard / @ohos.file.picker）
@@ -437,6 +459,21 @@ struct Index {
     } catch (e) {
       // 光标设置失败：忽略
     }
+  }
+
+  // ---- 单指触摸注入（第 10 轮修复：原生触摸回调不可用，ArkTS 事件桥） ----
+  // TouchType: 0=Down 1=Up 2=Move 3=Cancel；单指时逐触点注入引擎。
+  private injectTouchEvents(event: TouchEvent): void {
+    let touches = event.touches;
+    if (touches.length != 1) {
+      return; // 双指交给滚动手势，多点暂不支持
+    }
+    let t = touches[0];
+    let type: number = t.type;
+    if (type == 3) {
+      type = 2; // Cancel 按抬起处理
+    }
+    godot.injectTouch(type, t.id, t.x, t.y);
   }
 
   // ---- 触控板手势（第 8 轮，双指滑动 -> 滚轮注入） ----

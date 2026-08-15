@@ -431,6 +431,109 @@ void OHOS_XComponent::_enqueue_input_event(const Ref<InputEvent> &p_event) {
 	input_events.push_back(p_event);
 }
 
+// ---- 输入注入（第 10 轮修复：ArkTS 事件桥，主线程调用） ----
+
+void OHOS_XComponent::push_mouse_event(int p_action, int p_button, const Vector2 &p_pos) {
+	// ArkTS onMouse 注入：action 1=按下 2=抬起 3=移动；button 0=左 1=右 2=中。
+	// 生成 InputEventMouseButton/Motion 入队（对应 OH_NativeXComponent
+	// DispatchMouseEvent 回调，但由 ArkTS 通用事件驱动）。
+	Ref<InputEventMouseButton> ev;
+	ev.instantiate();
+	ev->set_position(p_pos);
+	ev->set_global_position(p_pos);
+	MouseButton mb = MouseButton::NONE;
+	switch (p_button) {
+		case 0:
+			mb = MouseButton::LEFT;
+			break;
+		case 1:
+			mb = MouseButton::RIGHT;
+			break;
+		case 2:
+			mb = MouseButton::MIDDLE;
+			break;
+		default:
+			mb = MouseButton::NONE;
+			break;
+	}
+	MouseButtonMask mask = MouseButtonMask::NONE;
+	if (mb == MouseButton::LEFT) {
+		mask = MouseButtonMask::LEFT;
+	} else if (mb == MouseButton::RIGHT) {
+		mask = MouseButtonMask::RIGHT;
+	} else if (mb == MouseButton::MIDDLE) {
+		mask = MouseButtonMask::MIDDLE;
+	}
+	if (p_action == 3) {
+		// 移动：转为 InputEventMouseMotion（相对位移用上次位置增量）
+		Ref<InputEventMouseMotion> mev;
+		mev.instantiate();
+		mev->set_position(p_pos);
+		mev->set_global_position(p_pos);
+		mev->set_relative(Vector2(p_pos) - Vector2(last_mouse_position));
+		mev->set_button_mask(mask);
+		last_mouse_position = Point2i((int)p_pos.x, (int)p_pos.y);
+		MutexLock lock(input_events_mutex);
+		_enqueue_input_event(mev);
+	} else {
+		ev->set_button_index(mb);
+		ev->set_button_mask(mask);
+		ev->set_pressed(p_action == 1);
+		last_mouse_position = Point2i((int)p_pos.x, (int)p_pos.y);
+		MutexLock lock(input_events_mutex);
+		_enqueue_input_event(ev);
+	}
+}
+
+void OHOS_XComponent::push_key_event(int p_ohos_keycode, bool p_pressed) {
+	// ArkTS onKeyEvent 注入：OHOS KeyCode -> Godot Key（复用双枚举映射表）。
+	Key key = KeyMappingOHOS::translate_key(static_cast<unsigned int>(p_ohos_keycode));
+	if (key == Key::NONE) {
+		return;
+	}
+	Ref<InputEventKey> ev;
+	ev.instantiate();
+	ev->set_pressed(p_pressed);
+	ev->set_keycode(key);
+	ev->set_physical_keycode(key);
+	ev->set_location(KeyMappingOHOS::translate_location(static_cast<unsigned int>(p_ohos_keycode)));
+	ev->set_echo(false);
+	MutexLock lock(input_events_mutex);
+	_enqueue_input_event(ev);
+}
+
+void OHOS_XComponent::push_touch_event(int p_type, int p_id, const Vector2 &p_pos) {
+	// ArkTS onTouch 注入（单指）：type 0=按下 1=移动 2=抬起 3=取消。
+	if (p_type == 0 || p_type == 2) {
+		Ref<InputEventScreenTouch> ev;
+		ev.instantiate();
+		ev->set_index(p_id);
+		ev->set_position(p_pos);
+		ev->set_pressed(p_type == 0);
+		MutexLock lock(input_events_mutex);
+		_enqueue_input_event(ev);
+		if (p_type == 0) {
+			touch_state[p_id] = p_pos;
+		} else {
+			touch_state.erase(p_id);
+		}
+	} else if (p_type == 1) {
+		Ref<InputEventScreenDrag> ev;
+		ev.instantiate();
+		ev->set_index(p_id);
+		ev->set_position(p_pos);
+		Vector2 rel;
+		if (touch_state.has(p_id)) {
+			rel = p_pos - touch_state[p_id];
+		}
+		ev->set_relative(rel);
+		MutexLock lock(input_events_mutex);
+		_enqueue_input_event(ev);
+		touch_state[p_id] = p_pos;
+	}
+	// 取消：忽略（引擎按抬起处理即可）
+}
+
 // ---- 输入注入（第 8 轮：输入法/触控板，主线程调用） ----
 
 void OHOS_XComponent::push_input_event(const String &p_text, Key p_keycode, char32_t p_unicode) {

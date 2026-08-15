@@ -640,6 +640,92 @@ static napi_value engine_inject_wheel(napi_env env, napi_callback_info info) {
 	return nullptr;
 }
 
+// ---- ArkTS 输入事件桥（第 10 轮修复：surfaceId 路径无原生回调） ----
+// API 26 的 XComponent 上下文不再提供 nativeXComponent，无法注册
+// DispatchTouchEvent/MouseEvent/KeyEvent 原生回调；输入改由 ArkTS 通用
+// 事件（onTouch/onMouse/onKeyEvent）经以下 NAPI 注入引擎输入队列。
+// 坐标单位：ArkTS 侧为 vp，注入前乘屏幕密度换算为 px（对应 macOS NSEvent）。
+
+// injectMouse(action, x, y, button) -> void
+//   action: 1=按下 2=抬起 3=移动；button: 0=左 1=右 2=中（MouseEvent.button）
+static napi_value engine_inject_mouse(napi_env env, napi_callback_info info) {
+	size_t argc = 4;
+	napi_value args[4];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	int action = 0;
+	double x = 0.0;
+	double y = 0.0;
+	int button = 0;
+	if (argc >= 1) {
+		napi_get_value_int32(env, args[0], &action);
+	}
+	if (argc >= 2) {
+		napi_get_value_double(env, args[1], &x);
+	}
+	if (argc >= 3) {
+		napi_get_value_double(env, args[2], &y);
+	}
+	if (argc >= 4) {
+		napi_get_value_int32(env, args[3], &button);
+	}
+	OHOS_XComponent *xc = OHOS_XComponent::get_instance();
+	if (xc) {
+		float density = OS_OHOS::get_singleton() ? OS_OHOS::get_singleton()->get_screen_density() : 1.0f;
+		xc->push_mouse_event(action, button, Vector2(static_cast<float>(x * density), static_cast<float>(y * density)));
+	}
+	return nullptr;
+}
+
+// injectKey(keycode, pressed) -> void（keycode 为 ArkTS KeyEvent.keyCode）
+static napi_value engine_inject_key(napi_env env, napi_callback_info info) {
+	size_t argc = 2;
+	napi_value args[2];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	int keycode = 0;
+	bool pressed = false;
+	if (argc >= 1) {
+		napi_get_value_int32(env, args[0], &keycode);
+	}
+	if (argc >= 2) {
+		napi_get_value_bool(env, args[1], &pressed);
+	}
+	OHOS_XComponent *xc = OHOS_XComponent::get_instance();
+	if (xc) {
+		xc->push_key_event(keycode, pressed);
+	}
+	return nullptr;
+}
+
+// injectTouch(type, id, x, y) -> void
+//   type: 0=按下 1=移动 2=抬起 3=取消（TouchType 对齐）
+static napi_value engine_inject_touch(napi_env env, napi_callback_info info) {
+	size_t argc = 4;
+	napi_value args[4];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	int type = 0;
+	int id = 0;
+	double x = 0.0;
+	double y = 0.0;
+	if (argc >= 1) {
+		napi_get_value_int32(env, args[0], &type);
+	}
+	if (argc >= 2) {
+		napi_get_value_int32(env, args[1], &id);
+	}
+	if (argc >= 3) {
+		napi_get_value_double(env, args[2], &x);
+	}
+	if (argc >= 4) {
+		napi_get_value_double(env, args[3], &y);
+	}
+	OHOS_XComponent *xc = OHOS_XComponent::get_instance();
+	if (xc) {
+		float density = OS_OHOS::get_singleton() ? OS_OHOS::get_singleton()->get_screen_density() : 1.0f;
+		xc->push_touch_event(type, id, Vector2(static_cast<float>(x * density), static_cast<float>(y * density)));
+	}
+	return nullptr;
+}
+
 // ---- 手柄设备枚举桥（第 8 轮：@ohos.multimodalInput.inputDevice） ----
 // 引擎初始化时请求 ArkTS 枚举全部输入设备，过滤 joystick 后回传
 //（对应 macOS IOHIDManagerCopyDevices / Android InputDevice.getDeviceIds）。
@@ -1294,11 +1380,14 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "registerPointerHandler", nullptr, engine_register_pointer_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "registerCursorHandler", nullptr, engine_register_cursor_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "injectWheel", nullptr, engine_inject_wheel, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "injectMouse", nullptr, engine_inject_mouse, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "injectKey", nullptr, engine_inject_key, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "injectTouch", nullptr, engine_inject_touch, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "registerGamepadHandler", nullptr, engine_register_gamepad_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "gamepadDevices", nullptr, engine_gamepad_devices, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 18, props);
+	napi_define_properties(env, exports, 21, props);
 	return exports;
 }
 
