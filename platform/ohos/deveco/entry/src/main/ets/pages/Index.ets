@@ -63,6 +63,9 @@ struct Index {
   private mainWindowId: number = -1;
   // 触控板双指手势跟踪（第 8 轮：双指中心点增量 -> 滚轮注入）
   private touchCenter: Array<number> = [];
+  // 待回拷的保存文件映射（第 10 轮修复：沙盒 exports 路径 -> 用户选择的目标 URI），
+  // 引擎写完文件后在下一次对话框操作或页面销毁时写回公共目录。
+  private pendingExports: Map<string, string> = new Map<string, string>();
 
   build() {
     Column() {
@@ -112,7 +115,8 @@ struct Index {
           godot.notifyFocus(true);
         })
         .onDestroy(() => {
-          // 页面销毁：停止并释放引擎
+          // 页面销毁：写回待保存文件，停止并释放引擎
+          this.flushPendingExports();
           godot.stop();
           godot.dispose();
           this.engineStarted = false;
@@ -360,8 +364,33 @@ struct Index {
     return out;
   }
 
+  // 写回保存映射（引擎已写完的沙盒文件 -> 用户选择的目标 URI）
+  private flushPendingExports(): void {
+    if (this.pendingExports.size == 0) {
+      return;
+    }
+    let keys: string[] = Array.from(this.pendingExports.keys());
+    for (let i = 0; i < keys.length; i++) {
+      let sandboxPath: string = keys[i];
+      let targetUri: string | undefined = this.pendingExports.get(sandboxPath);
+      if (targetUri == undefined) {
+        continue;
+      }
+      try {
+        if (fs.accessSync(sandboxPath)) {
+          fs.copyFileSync(sandboxPath, targetUri);
+        }
+      } catch (e) {
+        console.error('GodotOHOS flushPendingExports failed: ' + JSON.stringify(e));
+      }
+      this.pendingExports.delete(sandboxPath);
+    }
+  }
+
   // 打开系统文件选择器，选择结果回传 C++（godot.filePickerResult）
   private openFilePicker(title: string, mode: number): void {
+    // 上次保存的待回拷文件先写回目标 URI（引擎已完成写入）
+    this.flushPendingExports();
     // FileDialogMode: 0 打开单文件 / 1 打开多文件 / 2 打开目录 / 3 打开任意 / 4 保存
     let pickerOptions: picker.DocumentSelectOptions = {
       maxSelectNumber: (mode == 1) ? 100 : 1,
@@ -390,12 +419,32 @@ struct Index {
       uriList = [];
     }).finally(() => {
       // 第 10 轮修复：公共目录 URI（file://docs/...）引擎无法直接打开，
-      // 拷贝到沙盒 imports 目录后回传沙盒路径（保存模式 4 暂不回拷，
-      // 引擎写沙盒 exports 目录，另存为场景后续完善）。
+      // 拷贝到沙盒 imports 目录后回传沙盒路径。保存模式（4）回传沙盒
+      // exports 路径供引擎写入，并记录「沙盒路径 -> 目标 URI」映射，
+      // 由 flushPendingExports（下次对话框操作/页面销毁）写回公共目录。
       if (uriList.length > 0 && mode != 4) {
         this.copySelectionToSandbox(uriList).then((sandboxPaths: string[]) => {
           godot.filePickerResult(JSON.stringify(sandboxPaths));
         });
+      } else if (uriList.length > 0 && mode == 4) {
+        let exportBase: string = this.getCacheDir() + '/exports';
+        try {
+          fs.mkdirSync(exportBase, true);
+        } catch (e) {
+          // 已存在忽略
+        }
+        let exportPaths: string[] = [];
+        for (let i = 0; i < uriList.length; i++) {
+          let uri: string = uriList[i];
+          let name: string = uri.substring(uri.lastIndexOf('/') + 1);
+          if (name.length == 0) {
+            name = 'export_' + i;
+          }
+          let sandboxPath: string = exportBase + '/' + name;
+          this.pendingExports.set(sandboxPath, uri);
+          exportPaths.push(sandboxPath);
+        }
+        godot.filePickerResult(JSON.stringify(exportPaths));
       } else {
         godot.filePickerResult(JSON.stringify(uriList));
       }
