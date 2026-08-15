@@ -27,6 +27,8 @@ import pasteboard from '@ohos.pasteboard';
 import picker from '@ohos.file.picker';
 // 文件授权持久化（第 9 轮：公共目录 URI 持久化授权，@ohos.fileshare）
 import fileshare from '@ohos.fileshare';
+// 文件系统操作（第 10 轮修复：文件对话框 URI -> 沙盒拷贝，@ohos.file.fs）
+import fs from '@ohos.file.fs';
 // 窗口模式（第 5 轮：全屏/最大化经 @ohos.window 应用）
 import window from '@ohos.window';
 // 系统指针（第 7 轮：鼠标捕获/隐藏；第 8 轮：光标形状 setPointerStyle）
@@ -289,6 +291,75 @@ struct Index {
 
   // ---- 文件选择器（第 5 轮，@ohos.file.picker DocumentViewPicker） ----
 
+  // 递归拷贝目录 URI 到沙盒（返回拷贝后的沙盒路径）
+  private async copyDirToSandbox(srcUri: string, destDir: string): Promise<string> {
+    try {
+      fs.mkdirSync(destDir, true);
+      let entries: Array<string> = fs.listFileSync(srcUri);
+      for (let i = 0; i < entries.length; i++) {
+        let name: string = entries[i];
+        let childUri: string = srcUri + '/' + name;
+        let childDest: string = destDir + '/' + name;
+        let stat: fs.Stat = fs.statSync(childUri);
+        if (stat.isDirectory()) {
+          await this.copyDirToSandbox(childUri, childDest);
+        } else {
+          fs.copyFileSync(childUri, childDest);
+        }
+      }
+      return destDir;
+    } catch (e) {
+      console.error('GodotOHOS copyDirToSandbox failed: ' + JSON.stringify(e));
+      return '';
+    }
+  }
+
+  // 把用户选择的 URI（文件或目录）拷贝到应用沙盒 imports 目录，
+  // 回传沙盒真实路径（引擎 FileAccess 才能打开；公共目录 URI 无法直接访问）。
+  private async copySelectionToSandbox(uris: string[]): Promise<string[]> {
+    let out: string[] = [];
+    let importBase: string = this.getCacheDir() + '/imports';
+    try {
+      fs.mkdirSync(importBase, true);
+    } catch (e) {
+      // 目录已存在等场景忽略
+    }
+    for (let i = 0; i < uris.length; i++) {
+      let uri: string = uris[i];
+      try {
+        let name: string = uri.substring(uri.lastIndexOf('/') + 1);
+        if (name.length == 0) {
+          name = 'import_' + i;
+        }
+        // 重名处理：追加序号
+        let dest: string = importBase + '/' + name;
+        let n: number = 1;
+        while (fs.accessSync(dest)) {
+          let dot: number = name.lastIndexOf('.');
+          let base: string = dot > 0 ? name.substring(0, dot) : name;
+          let ext: string = dot > 0 ? name.substring(dot) : '';
+          dest = importBase + '/' + base + '_' + n + ext;
+          n++;
+        }
+        let stat: fs.Stat = fs.statSync(uri);
+        if (stat.isDirectory()) {
+          let r: string = await this.copyDirToSandbox(uri, dest);
+          if (r.length > 0) {
+            out.push(r);
+          }
+        } else {
+          fs.copyFileSync(uri, dest);
+          out.push(dest);
+        }
+      } catch (e) {
+        console.error('GodotOHOS copySelectionToSandbox item failed: ' + JSON.stringify(e));
+        // 拷贝失败回退传原始 URI（引擎侧打开会失败，但不丢结果）
+        out.push(uri);
+      }
+    }
+    return out;
+  }
+
   // 打开系统文件选择器，选择结果回传 C++（godot.filePickerResult）
   private openFilePicker(title: string, mode: number): void {
     // FileDialogMode: 0 打开单文件 / 1 打开多文件 / 2 打开目录 / 3 打开任意 / 4 保存
@@ -318,8 +389,16 @@ struct Index {
     }).catch(() => {
       uriList = [];
     }).finally(() => {
-      // 回传结果（JSON 数组字符串）；用户取消时为空数组
-      godot.filePickerResult(JSON.stringify(uriList));
+      // 第 10 轮修复：公共目录 URI（file://docs/...）引擎无法直接打开，
+      // 拷贝到沙盒 imports 目录后回传沙盒路径（保存模式 4 暂不回拷，
+      // 引擎写沙盒 exports 目录，另存为场景后续完善）。
+      if (uriList.length > 0 && mode != 4) {
+        this.copySelectionToSandbox(uriList).then((sandboxPaths: string[]) => {
+          godot.filePickerResult(JSON.stringify(sandboxPaths));
+        });
+      } else {
+        godot.filePickerResult(JSON.stringify(uriList));
+      }
     });
   }
 
