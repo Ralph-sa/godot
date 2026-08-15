@@ -19,6 +19,24 @@ interface_coverage: 88%
 
 ## 轮次记录
 
+### 第 10 轮修复（输入事件桥，2026-08-15 夜，提交 3781062）
+
+> 背景：surfaceId 路径下（API 26 无 nativeXComponent）原生输入回调注册不可用，
+> 触摸/鼠标/键盘输入缺失，编辑器即使渲染出来也无法操作。
+
+- **方案**：输入改由 ArkTS 通用事件驱动，经 NAPI 注入引擎输入队列：
+  - Index.ets：XComponent 增加 `.onMouse` / `.onKeyEvent`（通用事件，API 12+），
+    `.onTouch` 扩展单指注入（双指保留触控板滚动手势）；
+  - main_ohos.cpp：新增 `injectMouse(action,x,y,button)` / `injectKey(keycode,pressed)` /
+    `injectTouch(type,id,x,y)` 三个 NAPI（接口 18 → 21），vp 坐标乘屏幕密度转 px；
+  - ohos_xcomponent：`push_mouse_event`（移动转 InputEventMouseMotion 相对位移增量，
+    与 macOS NSEvent delta 对齐）/ `push_key_event`（复用 KeyMappingOHOS 双枚举映射）/
+    `push_touch_event`（DOWN/UP 转 ScreenTouch，MOVE 转 ScreenDrag 带相对位移），
+    全部互斥入队，引擎线程 process_events 消费。
+- **验证**：scons 交叉编译通过 + DevEco ArkTS 编译通过（hvigor BUILD SUCCESSFUL）；
+  运行时行为待模拟器恢复后实测（模拟器自身转译层崩溃后需 DevEco GUI 重启）。
+- **git 提交**：3781062 `feat(ohos): 第10轮修复 ArkTS 事件桥（触摸/鼠标/键盘 NAPI 注入）`
+
 ### 第 10 轮修复（模拟器实测打通引擎启动，2026-08-15 晚，提交 0ad2343）
 
 > 背景：拿到模拟器实测机会后逐层排查「引擎启动即崩溃（SIGSEGV pc=0）」，
