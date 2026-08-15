@@ -40,6 +40,8 @@
 #include "ohos_bridge.h"
 #include "servers/audio/audio_driver.h"
 
+#include "core/os/mutex.h"
+
 #include <sys/utsname.h>
 #include <unistd.h>
 
@@ -48,6 +50,58 @@ static OS_OHOS *os_ohos_singleton = nullptr;
 
 OS_OHOS *OS_OHOS::get_singleton() {
 	return os_ohos_singleton;
+}
+
+// ---- 进程内重启（第 10 轮修复：create_instance 不支持 fork/exec） ----
+// 鸿蒙应用进程由 appspawn 创建，fork()+execvp(/proc/self/exe) 出的子进程
+// 没有 Ability/ACE 运行时上下文（无窗口/无 NAPI 宿主），编辑器实例必然
+// 启动失败或黑屏卡死 —— 这正是「项目管理器创建项目后编辑器打不开」的根因。
+// 因此 create_instance 改为进程内重启：参数记录到 pending 列表，
+// 引擎线程（main_ohos.cpp）在 Main::cleanup 完成后以新参数重新
+// Main::setup + Main::start，实现与桌面端「新进程」等价的实例语义。
+static List<String> ohos_pending_restart_args;
+static Mutex ohos_pending_restart_mutex;
+
+Error OS_OHOS::create_instance(const List<String> &p_arguments, ProcessID *r_child_id) {
+	MutexLock lock(ohos_pending_restart_mutex);
+	ohos_pending_restart_args = p_arguments;
+
+	// 首次调用（ProjectManager 打开项目）：置 restart_on_exit，PM 随后
+	// get_tree()->quit()，Main::cleanup 走重启分支再次调用本函数；
+	// 二次调用时 restart_on_exit 已置位，直接返回即可（避免覆盖标志）。
+	if (!is_restart_on_exit_set()) {
+		set_restart_on_exit(true, p_arguments);
+	}
+
+	if (r_child_id) {
+		// 虚拟实例 ID（非真实 pid；OHOS 单进程内无独立子进程）
+		*r_child_id = 1;
+	}
+	return OK;
+}
+
+Error OS_OHOS::create_process(const String &p_path, const List<String> &p_arguments, ProcessID *r_child_id, bool p_open_console) {
+	// 指向自身可执行文件（/proc/self/exe）的进程创建请求转进程内重启：
+	// 参照 Android 的 create_process 守卫（ANDROID_EXEC_PATH 分支）。
+	// GDScript OS.create_instance() 默认走 create_process(get_executable_path())。
+	if (p_path == get_executable_path()) {
+		return create_instance(p_arguments, r_child_id);
+	}
+	// 其他路径（外部二进制）：沙盒内 fork/exec 会因缺少 appspawn 上下文失败，
+	// OS_Unix 实现会返回错误/子进程自杀，不会卡住主流程。
+	return OS_Unix::create_process(p_path, p_arguments, r_child_id, p_open_console);
+}
+
+// 引擎线程取走待重启参数（main_ohos.cpp 在 Main::cleanup 后调用）。
+// 有参数返回 true 并清空列表；无参数返回 false（正常退出）。
+bool OS_OHOS::consume_pending_restart_args(List<String> &r_args) {
+	MutexLock lock(ohos_pending_restart_mutex);
+	if (ohos_pending_restart_args.is_empty()) {
+		return false;
+	}
+	r_args = ohos_pending_restart_args;
+	ohos_pending_restart_args.clear();
+	return true;
 }
 
 OS_OHOS::OS_OHOS() {
@@ -80,8 +134,15 @@ void OS_OHOS::initialize() {
 	// 初始化核心（含 DisplayServer 驱动注册）
 	initialize_core();
 
-	// 注册 OHAudio 音频驱动（AudioDriverManager 管理，main.cpp 按 audio/driver/driver 选择）
-	AudioDriverManager::add_driver(&audio_driver_ohos);
+	// 注册 OHAudio 音频驱动（AudioDriverManager 管理，main.cpp 按 audio/driver/driver 选择）。
+	// 进程内重启会再次调用 initialize()（Main::setup -> OS::initialize），
+	// AudioDriverManager 驱动表为静态数组且不随 finalize_core 清空，
+	// 重复注册会耗尽 MAX_DRIVERS，因此只注册一次（第 10 轮修复）。
+	static bool audio_driver_registered = false;
+	if (!audio_driver_registered) {
+		AudioDriverManager::add_driver(&audio_driver_ohos);
+		audio_driver_registered = true;
+	}
 }
 
 void OS_OHOS::finalize() {

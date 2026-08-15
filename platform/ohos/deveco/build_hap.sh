@@ -23,7 +23,8 @@ set -euo pipefail
 # ------------------------- 环境探测（DevEco Studio 26.0.0） -------------------------
 DEVECO_ROOT="/Applications/DevEco-Studio.app/Contents"
 
-# SDK 根目录（hvigor 需要 DEVECO_SDK_HOME / OHOS_BASE_SDK_HOME 指向 sdk 根）
+# SDK 根目录（hvigor 需要 DEVECO_SDK_HOME / OHOS_BASE_SDK_HOME 指向含
+# default/sdk-pkg.json + default/openharmony/<组件> 的 SDK 根，即 sdk 目录）
 export DEVECO_SDK_HOME="${DEVECO_SDK_HOME:-${DEVECO_ROOT}/sdk}"
 export OHOS_BASE_SDK_HOME="${OHOS_BASE_SDK_HOME:-${DEVECO_ROOT}/sdk}"
 
@@ -79,7 +80,12 @@ echo ">> 启动 hvigor assembleHap（${BUILD_MODE}）..."
     --no-daemon
 
 # ------------------------- 输出结果 -------------------------
+# 已配置 signingConfig 时产物为 signed.hap（未配置时回落 unsigned.hap）
+SIGNED_HAP="entry/build/default/outputs/default/entry-default-signed.hap"
 HAP="entry/build/default/outputs/default/entry-default-unsigned.hap"
+if [ -f "${SIGNED_HAP}" ]; then
+    HAP="${SIGNED_HAP}"
+fi
 if [ -f "${HAP}" ]; then
     SIZE=$(du -h "${HAP}" | cut -f1)
     echo "======================================================================"

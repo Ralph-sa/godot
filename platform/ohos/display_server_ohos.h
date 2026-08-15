@@ -40,6 +40,12 @@
 #include "core/templates/hash_map.h"
 #include "servers/display/display_server.h"
 
+// Vulkan 渲染上下文/设备（第 10 轮修复：需完整类型以支持 memnew/memdelete）
+#ifdef VULKAN_ENABLED
+#include "drivers/vulkan/rendering_context_driver_vulkan.h"
+#include "servers/rendering/rendering_device.h"
+#endif
+
 /* DisplayServerOHOS：HarmonyOS 显示服务器。
  *
  * 对应 macOS 的 DisplayServerMacOSBase 职责：窗口管理、输入事件派发、
@@ -71,6 +77,15 @@ private:
 
 	// 当前渲染驱动名（"vulkan"）
 	String rendering_driver;
+
+	// ---- Vulkan 渲染上下文（第 10 轮修复：缺失导致渲染服务器初始化空指针崩溃）----
+	// 对应 macOS DisplayServerMacOS 的 rendering_context/rendering_device 职责。
+	// 必须在 Main::setup 创建 RenderingServer 之前完成初始化并
+	// 调用 RendererCompositorRD::make_current()，否则
+	// RenderingServerDefault::_init() 里 RendererCompositor::create()
+	// 返回 nullptr（_create_func 为空）导致空指针解引用崩溃。
+	RenderingContextDriverVulkan *rendering_context = nullptr;
+	RenderingDevice *rendering_device = nullptr;
 
 	// 主窗口尺寸
 	Size2i window_size;

@@ -110,6 +110,22 @@ public:
 	virtual Error get_entropy(uint8_t *r_buffer, int p_bytes) override;
 	virtual String get_system_dir(SystemDir p_dir, bool p_shared_storage = true) const override;
 
+	// ---- 多实例/进程重启（第 10 轮修复） ----
+	// 鸿蒙 App 进程由 appspawn 创建并注入 Ability/ACE 运行时上下文，
+	// OS_Unix 默认的 fork()+execvp(/proc/self/exe) 产出的子进程缺少该上下文，
+	// 会启动失败或黑屏卡死（即「创建项目后编辑器打不开/卡住」问题）。
+	// 改为进程内重启：ProjectManager 打开项目时调用本函数，参数记录后
+	// 引擎线程在 Main::cleanup 完成后以新参数重新 Main::setup + Main::start。
+	virtual Error create_instance(const List<String> &p_arguments, ProcessID *r_child_id = nullptr) override;
+	// create_process 指向自身可执行文件时（GDScript OS.create_instance 等场景），
+	// 同样转进程内重启；其他路径仍走 OS_Unix::create_process（fork/exec，
+	// 执行外部二进制在沙盒内会失败返回错误，不会卡死）。
+	virtual Error create_process(const String &p_path, const List<String> &p_arguments, ProcessID *r_child_id = nullptr, bool p_open_console = false) override;
+
+	// 引擎线程消费待重启参数（main_ohos.cpp 在 Main::cleanup 后调用）。
+	// 有参数返回 true 并清空；无参数返回 false（正常退出，不再重启）。
+	static bool consume_pending_restart_args(List<String> &r_args);
+
 	// ---- 沙盒路径注入（由 NAPI 桥调用） ----
 	void set_sandbox_paths(const String &p_files_dir, const String &p_cache_dir);
 

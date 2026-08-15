@@ -37,6 +37,44 @@
 #include "core/string/print_string.h"
 #include "main/main.h"
 
+#include <hilog/log.h>
+#include <thread>
+#include <chrono>
+#include <cstdio>
+
+// 平台诊断日志辅助：hdc 抓取 hilog 时 LOG_APP 域日志可能因日志量/过滤丢失，
+// 崩溃场景下 faultlog 也只含系统 core 域。因此关键路径同时写入应用 cacheDir
+// 下的诊断文件，崩溃后 hdc file recv 直接读取，避免 hilog 不确定性。
+// 注意：鸿蒙沙盒根为 /data/storage/el2/base/haps/<module>，
+// 写 /data/storage/el2/base/cache（沙盒外）会被拒绝；必须用 NAPI 注入的
+// cacheDir（OS_OHOS::get_cache_path，引擎启动前已注入）。
+static void ohos_diag_log(const char *p_fmt, ...) {
+	String diag_path = "/data/storage/el2/base/haps/entry/cache/godot_ds_diag.log";
+	OS_OHOS *os = OS_OHOS::get_singleton();
+	if (os) {
+		String cache = os->get_cache_path();
+		if (!cache.is_empty()) {
+			diag_path = cache.path_join("godot_ds_diag.log");
+		}
+	}
+	FILE *f = fopen(diag_path.utf8().get_data(), "a");
+	if (f) {
+		va_list args;
+		va_start(args, p_fmt);
+		vfprintf(f, p_fmt, args);
+		va_end(args);
+		fprintf(f, "\n");
+		fclose(f);
+	}
+}
+
+// Vulkan 渲染上下文与渲染设备（第 10 轮修复：Vulkan 链路缺失导致空指针崩溃）
+#ifdef VULKAN_ENABLED
+#include "rendering_context_driver_vulkan_ohos.h"
+#include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
+#include "servers/rendering/rendering_device.h"
+#endif
+
 // 静态创建函数（DisplayServer 注册用），对应 macOS create_func
 static DisplayServer *create_func(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, DisplayServerEnums::Context p_context, int64_t p_parent_window, Error &r_error) {
 	// 骨架期：直接创建 DisplayServerOHOS；渲染驱动不匹配时返回错误
@@ -58,8 +96,16 @@ Vector<String> DisplayServerOHOS::get_rendering_drivers_func() {
 }
 
 void DisplayServerOHOS::register_ohos_driver() {
-	// 注册 display_driver = "ohos"，与 main.cpp 的 display_driver 枚举对应
+	// 注册 display_driver = "ohos"，与 main.cpp 的 display_driver 枚举对应。
+	// 进程内重启（第 10 轮修复）会再次 initialize_core -> 本函数：
+	// DisplayServer 的 create_function 表是静态数组且永不清理，
+	// 重复注册会堆积表项直至 MAX_SERVERS=64，因此只注册一次。
+	static bool driver_registered = false;
+	if (driver_registered) {
+		return;
+	}
 	register_create_function("ohos", create_func, get_rendering_drivers_func);
+	driver_registered = true;
 }
 
 // 静态单例指针（DisplayServer 非 Object，无法 cast_to）
@@ -80,6 +126,70 @@ DisplayServerOHOS::DisplayServerOHOS(const String &p_rendering_driver, DisplaySe
 	main_window->set_rect(Rect2i(0, 0, p_size.x, p_size.y));
 	windows[DisplayServerEnums::MAIN_WINDOW_ID] = main_window;
 
+#ifdef VULKAN_ENABLED
+	// 初始化 Vulkan 渲染上下文（对应 macOS DisplayServerMacOS 构造中的
+	// RenderingContextDriverVulkanMacOS 创建 + initialize）。
+	// 必须在此完成，因为 Main::setup 后续会立即创建 RenderingServer，
+	// 其 _init() 依赖 RendererCompositorRD::make_current() 已注册 compositor。
+	//
+	// 第 10 轮修复（续）：关键路径诊断同时写入文件 + hilog（ohos_diag_log）。
+	// 崩溃现场 faultlog 只保留系统 core 域（C0xxx）日志，应用 LOG_APP 域输出
+	// 可能因日志量丢弃，写文件可确保崩溃后 hdc file recv 直接读到每一步结果。
+	if (rendering_driver == "vulkan") {
+		ohos_diag_log("DisplayServerOHOS: entering vulkan init (driver=%s)", p_rendering_driver.utf8().get_data());
+		rendering_context = memnew(RenderingContextDriverVulkanOHOS);
+		Error ctx_err = rendering_context->initialize();
+		ohos_diag_log("DisplayServerOHOS: vulkan context initialize -> %d", (int)ctx_err);
+		if (ctx_err != OK) {
+			memdelete(rendering_context);
+			rendering_context = nullptr;
+			ERR_PRINT("DisplayServerOHOS: Vulkan rendering context initialization failed.");
+		} else {
+			// 注册主窗口 Vulkan Surface（第 10 轮修复）：
+			// RenderingDevice::initialize 依赖 surface_get_from_window() 返回非 0 的
+			// main_surface（其内部 window_surface_map 由 window_create 填充）。
+			// 若此处不注册，main_surface == 0 直接 ERR_FAIL_COND 返回 FAILED，
+			// 后续 RendererCompositorRD::make_current() 不会执行，导致
+			// RenderingServerDefault::_init() 中 RendererCompositor::create()
+			// 返回 nullptr 后空指针崩溃（SIGSEGV @ Not mapped）。
+			//
+			// native_window 未就绪时轮询等待（surface_created 回调在 ArkUI
+			// 主线程，构造运行在引擎线程，sleep 不阻塞回调）：避免 XComponent
+			// Surface 延迟创建导致 window_create 时拿不到句柄。
+			OHOS_XComponent *xc = OHOS_XComponent::get_instance();
+			OHNativeWindow *native_window = xc ? xc->get_native_window() : nullptr;
+			for (int i = 0; i < 100 && !native_window; i++) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 最多等 5s
+				native_window = xc ? xc->get_native_window() : nullptr;
+			}
+			ohos_diag_log("DisplayServerOHOS: native_window=%p (xc=%p)", (void *)native_window, (void *)xc);
+			if (!native_window) {
+				ohos_diag_log("DisplayServerOHOS: native_window not ready, cannot create Vulkan surface.");
+				ERR_PRINT("DisplayServerOHOS: native_window not ready, cannot create Vulkan surface.");
+			} else {
+				RenderingContextDriverVulkanOHOS::WindowPlatformData wpd;
+				wpd.window = native_window;
+				Error surf_err = rendering_context->window_create(DisplayServerEnums::MAIN_WINDOW_ID, &wpd);
+				ohos_diag_log("DisplayServerOHOS: vulkan window_create -> %d", (int)surf_err);
+			}
+
+			// 创建并初始化 RenderingDevice（全局单例，RenderingServer 使用）
+			rendering_device = memnew(RenderingDevice);
+			Error dev_err = rendering_device->initialize(rendering_context, DisplayServerEnums::MAIN_WINDOW_ID);
+			ohos_diag_log("DisplayServerOHOS: rendering device initialize -> %d", (int)dev_err);
+			if (dev_err != OK) {
+				ERR_PRINT(vformat("DisplayServerOHOS: RenderingDevice initialize failed (err=%d).", dev_err));
+				memdelete(rendering_device);
+				rendering_device = nullptr;
+			} else {
+				// 注册 Vulkan compositor（否则 RendererCompositor::create() 返回 null）
+				RendererCompositorRD::make_current();
+				ohos_diag_log("DisplayServerOHOS: RendererCompositorRD made current.");
+			}
+		}
+	}
+#endif
+
 	print_line(vformat("DisplayServerOHOS initialized (%s), window size %dx%d", p_rendering_driver, p_size.x, p_size.y));
 }
 
@@ -92,6 +202,18 @@ DisplayServerOHOS::~DisplayServerOHOS() {
 		memdelete(ime);
 		ime = nullptr;
 	}
+#ifdef VULKAN_ENABLED
+	// 释放渲染设备与上下文（与构造顺序相反；RenderingDevice 单例由
+	// RenderingServer 清理期使用，需在 DisplayServer 析构前释放）
+	if (rendering_device) {
+		memdelete(rendering_device);
+		rendering_device = nullptr;
+	}
+	if (rendering_context) {
+		memdelete(rendering_context);
+		rendering_context = nullptr;
+	}
+#endif
 	// 释放窗口对象
 	for (const KeyValue<DisplayServerEnums::WindowID, OHOS_Window *> &E : windows) {
 		memdelete(E.value);

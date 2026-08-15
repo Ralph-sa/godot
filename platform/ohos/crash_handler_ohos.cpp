@@ -39,8 +39,8 @@
 
 #include <hilog/log.h>
 
-// hilog 域名（日志标签，便于 hdc log 过滤）
-#define OHOS_LOG_DOMAIN 0xD002D01
+// hilog 域名（0x0-0xFFFF 合法范围，超范围会被截断导致日志异常）
+#define OHOS_LOG_DOMAIN 0xD001
 #define OHOS_LOG_TAG "GodotOHOS"
 
 // 需要拦截的崩溃信号集合

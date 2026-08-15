@@ -36,6 +36,7 @@
 #include "rendering_context_driver_vulkan_ohos.h"
 
 #include "core/string/print_string.h"
+#include "core/error/error_macros.h"
 #include "core/input/input.h"
 #include "core/os/mutex.h"
 #include "core/io/file_access.h"
@@ -44,15 +45,21 @@
 #include "main/main.h"
 
 #include <napi/native_api.h>
+#include <node_api.h>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <thread>
+#include <future>
+#include <sys/stat.h>
 
 #include <ace/xcomponent/native_interface_xcomponent.h>
 #include <hilog/log.h>
 #include <rawfile/raw_file.h>
 #include <rawfile/raw_file_manager.h>
 
-#define OHOS_LOG_DOMAIN 0xD002D01
+#define OHOS_LOG_DOMAIN 0xD001
 #define OHOS_LOG_TAG "GodotOHOS"
 
 /* main_ohos.cpp —— Godot HarmonyOS NAPI 入口。
@@ -75,6 +82,187 @@
 
 // 全局崩溃处理器（initialize 时注册）
 static CrashHandlerOHOS crash_handler;
+
+// ---- 引擎日志桥接 hilog（诊断用）----
+// 鸿蒙应用无 stdout/stderr 终端，Godot print_line/print_error 输出需转发到
+// hilog 才能通过 hdc shell hilog 查看（print_string.h 的 print handler 机制）。
+static PrintHandlerList ohos_print_handler;
+static ErrorHandlerList ohos_error_handler;
+
+static void ohos_print_func(void *p_userdata, const String &p_string, bool p_error, bool p_rich) {
+	// 转印到 hilog（LOG_APP 域），便于 hdc 抓取引擎初始化/渲染日志
+	if (p_error) {
+		OH_LOG_Print(LOG_APP, LOG_ERROR, OHOS_LOG_DOMAIN, OHOS_LOG_TAG, "%.*s", (int)p_string.length(), p_string.utf8().get_data());
+	} else {
+		OH_LOG_Print(LOG_APP, LOG_INFO, OHOS_LOG_DOMAIN, OHOS_LOG_TAG, "%.*s", (int)p_string.length(), p_string.utf8().get_data());
+	}
+}
+
+static void ohos_error_func(void *p_userdata, const char *p_func, const char *p_file, int p_line, const char *p_error, const char *p_descr, bool p_editor_notify, ErrorHandlerType p_type) {
+	OH_LOG_Print(LOG_APP, LOG_FATAL, OHOS_LOG_DOMAIN, OHOS_LOG_TAG,
+			"ERR[%s] %s:%d: %s\n  %s", p_func, p_file, p_line, p_error, p_descr ? p_descr : "");
+}
+
+// ---- 通用跨线程 JS 调用调度器（第 10 轮修复）----
+// 问题：HarmonyOS 的 napi_call_function 只能在 JS 主线程执行。
+// 引擎线程（std::thread）直接调用会触发 EcmaVM::CheckThread() 断言，
+// 导致 Fatal: ecma_vm cannot run in multi-thread（SIGABRT 崩溃）。
+// 官方推荐用 napi_threadsafe_function 将调用安全投递回 JS 主线程执行。
+//
+// 本调度器封装一次「引擎线程 -> JS 主线程」的函数调用：
+//  - ohos_tsfn_invoke() 由引擎线程发起，构造参数块后投递；
+//  - call_js_cb() 在 JS 主线程执行，解析参数并 napi_call_function；
+//  - 需要同步结果的调用使用 std::promise/future 阻塞等待（blocking 模式）。
+struct OHOS_TSFNArg {
+	enum class Type { INT, DOUBLE, BOOL, STRING, NONE } type = Type::NONE;
+	int32_t i = 0;
+	double d = 0.0;
+	bool b = false;
+	std::string s; // 字符串参数（值拷贝，随 call 生命周期管理，避免悬垂指针）
+};
+
+struct OHOS_TSFNCall {
+	napi_ref fn_ref = nullptr;                  // 目标 JS 函数引用（call_js_cb 内解析）
+	Vector<OHOS_TSFNArg> args;                  // 参数列表（0~8）
+	std::promise<std::string> *done_str = nullptr; // 非空时阻塞等待 JS 返回字符串
+};
+
+// JS 主线程回调：解析参数并调用目标函数（tsfn 的 call_js_cb，运行在 JS 主线程）
+static void ohos_tsfn_call_js(napi_env env, napi_value js_cb, void *context, void *data) {
+	OHOS_TSFNCall *call = static_cast<OHOS_TSFNCall *>(data);
+	if (!call || !call->fn_ref) {
+		if (call && call->done_str) {
+			call->done_str->set_value("");
+		}
+		delete call;
+		return;
+	}
+	napi_value global = nullptr;
+	napi_get_global(env, &global);
+	napi_value fn = nullptr;
+	napi_get_reference_value(env, call->fn_ref, &fn);
+	napi_value result = nullptr;
+	if (call->args.is_empty()) {
+		napi_call_function(env, global, fn, 0, nullptr, &result);
+	} else {
+		napi_value argv[8];
+		for (int i = 0; i < call->args.size(); i++) {
+			const OHOS_TSFNArg &a = call->args[i];
+			switch (a.type) {
+				case OHOS_TSFNArg::Type::INT:
+					napi_create_int32(env, a.i, &argv[i]);
+					break;
+				case OHOS_TSFNArg::Type::DOUBLE:
+					napi_create_double(env, a.d, &argv[i]);
+					break;
+				case OHOS_TSFNArg::Type::BOOL:
+					napi_create_int32(env, a.b ? 1 : 0, &argv[i]);
+					break;
+				case OHOS_TSFNArg::Type::STRING:
+					napi_create_string_utf8(env, a.s.c_str(), a.s.size(), &argv[i]);
+					break;
+				default:
+					napi_get_undefined(env, &argv[i]);
+					break;
+			}
+		}
+		napi_call_function(env, global, fn, call->args.size(), argv, &result);
+	}
+	// 需要字符串返回值（clipboard_get）：读取函数返回值
+	if (call->done_str) {
+		size_t len = 0;
+		if (result) {
+			napi_get_value_string_utf8(env, result, nullptr, 0, &len);
+		}
+		std::string s(len, '\0');
+		if (len > 0) {
+			napi_get_value_string_utf8(env, result, &s[0], len + 1, &len);
+		}
+		call->done_str->set_value(s);
+	}
+	delete call;
+}
+
+// 通用跨线程调用入口（引擎线程调用）：p_sync=true 时阻塞等待 JS 执行并返回其字符串值。
+// 复用单一全局 tsfn（initial_thread_count=1，调用方固定为引擎线程）。
+static napi_threadsafe_function ohos_tsfn = nullptr;
+static Mutex ohos_tsfn_mutex;
+
+static void ohos_tsfn_ensure(napi_env env) {
+	// 加锁保护：注册与引擎线程可能在初始化期并发首次调用，避免重复创建/竞态
+	MutexLock lock(ohos_tsfn_mutex);
+	if (ohos_tsfn) {
+		return;
+	}
+	napi_value resource_name = nullptr;
+	napi_create_string_utf8(env, "GodotOHOSCallJS", NAPI_AUTO_LENGTH, &resource_name);
+	napi_create_threadsafe_function(env, nullptr, nullptr, resource_name, 0, 1,
+			nullptr, nullptr, nullptr, ohos_tsfn_call_js, &ohos_tsfn);
+}
+
+static String ohos_tsfn_invoke(napi_env p_env, napi_ref p_fn_ref, const Vector<OHOS_TSFNArg> &p_args, bool p_sync) {
+	if (!p_env || !p_fn_ref) {
+		return String();
+	}
+	ohos_tsfn_ensure(p_env);
+	if (!ohos_tsfn) {
+		return String();
+	}
+	OHOS_TSFNCall *call = memnew(OHOS_TSFNCall);
+	call->fn_ref = p_fn_ref;
+	call->args = p_args;
+	std::promise<std::string> done_str;
+	std::future<std::string> fut;
+	if (p_sync) {
+		call->done_str = &done_str;
+		fut = done_str.get_future();
+	}
+	napi_status st = napi_call_threadsafe_function(ohos_tsfn, call, p_sync ? napi_tsfn_blocking : napi_tsfn_nonblocking);
+	if (st != napi_ok) {
+		delete call;
+		return String();
+	}
+	if (p_sync) {
+		std::string s = fut.get();
+		return String::utf8(s.c_str());
+	}
+	return String();
+}
+
+// 便捷构造：无参调用（通知型）
+static void ohos_tsfn_notify(napi_env p_env, napi_ref p_fn_ref) {
+	(void)ohos_tsfn_invoke(p_env, p_fn_ref, Vector<OHOS_TSFNArg>(), false);
+}
+
+// 便捷构造：单 int32 参数
+static void ohos_tsfn_int(napi_env p_env, napi_ref p_fn_ref, int32_t p_val) {
+	Vector<OHOS_TSFNArg> args;
+	OHOS_TSFNArg a;
+	a.type = OHOS_TSFNArg::Type::INT;
+	a.i = p_val;
+	args.push_back(a);
+	(void)ohos_tsfn_invoke(p_env, p_fn_ref, args, false);
+}
+
+// 便捷构造：单 bool 参数
+static void ohos_tsfn_bool(napi_env p_env, napi_ref p_fn_ref, bool p_val) {
+	Vector<OHOS_TSFNArg> args;
+	OHOS_TSFNArg a;
+	a.type = OHOS_TSFNArg::Type::BOOL;
+	a.b = p_val;
+	args.push_back(a);
+	(void)ohos_tsfn_invoke(p_env, p_fn_ref, args, false);
+}
+
+// 便捷构造：单字符串参数
+static void ohos_tsfn_str(napi_env p_env, napi_ref p_fn_ref, const String &p_val) {
+	Vector<OHOS_TSFNArg> args;
+	OHOS_TSFNArg a;
+	a.type = OHOS_TSFNArg::Type::STRING;
+	a.s = p_val.utf8().get_data();
+	args.push_back(a);
+	(void)ohos_tsfn_invoke(p_env, p_fn_ref, args, false);
+}
 
 // NAPI 侧注入的沙盒路径
 static std::string sandbox_files_dir;
@@ -99,45 +287,23 @@ static napi_ref clipboard_get_ref = nullptr;
 static Mutex clipboard_mutex;
 
 void ohos_clipboard_set_text(const String &p_text) {
-	// 写剪贴板：调用 ArkTS 注册的回调（@ohos.pasteboard setData）
+	// 写剪贴板：调用 ArkTS 注册的回调（@ohos.pasteboard setData）。
+	// 引擎线程调用，经 tsfn 投递到 JS 主线程执行（避免 CheckThread 崩溃）。
 	MutexLock lock(clipboard_mutex);
 	if (!clipboard_env || !clipboard_set_ref) {
 		return;
 	}
-	napi_value global = nullptr;
-	napi_get_global(clipboard_env, &global);
-	napi_value fn = nullptr;
-	napi_get_reference_value(clipboard_env, clipboard_set_ref, &fn);
-	napi_value str = nullptr;
-	napi_create_string_utf8(clipboard_env, p_text.utf8().get_data(), p_text.length(), &str);
-	napi_value argv[1] = { str };
-	napi_value result = nullptr;
-	napi_call_function(clipboard_env, global, fn, 1, argv, &result);
+	ohos_tsfn_str(clipboard_env, clipboard_set_ref, p_text);
 }
 
 String ohos_clipboard_get_text() {
-	// 读剪贴板：调用 ArkTS 注册的回调（@ohos.pasteboard getPasteData）
+	// 读剪贴板：调用 ArkTS 注册的回调（@ohos.pasteboard getPasteData）。
+	// 需同步返回结果：tsfn 阻塞模式等待 JS 主线程执行完成。
 	MutexLock lock(clipboard_mutex);
 	if (!clipboard_env || !clipboard_get_ref) {
 		return String();
 	}
-	napi_value global = nullptr;
-	napi_get_global(clipboard_env, &global);
-	napi_value fn = nullptr;
-	napi_get_reference_value(clipboard_env, clipboard_get_ref, &fn);
-	napi_value result = nullptr;
-	napi_call_function(clipboard_env, global, fn, 0, nullptr, &result);
-	if (result) {
-		size_t len = 0;
-		napi_get_value_string_utf8(clipboard_env, result, nullptr, 0, &len);
-		if (len > 0) {
-			Vector<char> buf;
-			buf.resize(len + 1);
-			napi_get_value_string_utf8(clipboard_env, result, buf.ptrw(), len + 1, &len);
-			return String::utf8(buf.ptr());
-		}
-	}
-	return String();
+	return ohos_tsfn_invoke(clipboard_env, clipboard_get_ref, Vector<OHOS_TSFNArg>(), true);
 }
 
 // 注册剪贴板回调（ArkTS: godot.registerClipboard(setFn, getFn) -> void）
@@ -233,17 +399,17 @@ Error ohos_pick_files(const String &p_title, int p_mode, const Callable &p_callb
 	}
 	picker_callback = p_callback;
 
-	napi_value global = nullptr;
-	napi_get_global(picker_env, &global);
-	napi_value fn = nullptr;
-	napi_get_reference_value(picker_env, picker_handler_ref, &fn);
-	napi_value title = nullptr;
-	napi_create_string_utf8(picker_env, p_title.utf8().get_data(), p_title.length(), &title);
-	napi_value mode = nullptr;
-	napi_create_int32(picker_env, p_mode, &mode);
-	napi_value argv[2] = { title, mode };
-	napi_value result = nullptr;
-	napi_call_function(picker_env, global, fn, 2, argv, &result);
+	// 经 tsfn 投递到 JS 主线程（引擎线程不能直接 napi_call_function）
+	Vector<OHOS_TSFNArg> args;
+	OHOS_TSFNArg a1;
+	a1.type = OHOS_TSFNArg::Type::STRING;
+	a1.s = p_title.utf8().get_data();
+	OHOS_TSFNArg a2;
+	a2.type = OHOS_TSFNArg::Type::INT;
+	a2.i = p_mode;
+	args.push_back(a1);
+	args.push_back(a2);
+	(void)ohos_tsfn_invoke(picker_env, picker_handler_ref, args, false);
 	return OK;
 }
 
@@ -272,20 +438,12 @@ static napi_value engine_register_window_handler(napi_env env, napi_callback_inf
 }
 
 void ohos_window_set_mode(int p_mode) {
-	// 通知 ArkTS 应用窗口模式（全屏/最大化等）
+	// 通知 ArkTS 应用窗口模式（全屏/最大化等）。引擎线程调用，经 tsfn 投递。
 	MutexLock lock(window_mutex);
 	if (!window_env || !window_mode_handler_ref) {
 		return;
 	}
-	napi_value global = nullptr;
-	napi_get_global(window_env, &global);
-	napi_value fn = nullptr;
-	napi_get_reference_value(window_env, window_mode_handler_ref, &fn);
-	napi_value mode = nullptr;
-	napi_create_int32(window_env, p_mode, &mode);
-	napi_value argv[1] = { mode };
-	napi_value result = nullptr;
-	napi_call_function(window_env, global, fn, 1, argv, &result);
+	ohos_tsfn_int(window_env, window_mode_handler_ref, p_mode);
 }
 
 void ohos_window_set_always_on_top(bool p_enabled) {
@@ -325,21 +483,25 @@ static void subwindow_call(int p_op, int p_id, int p_a, int p_b, int p_c, int p_
 	if (!subwindow_env || !subwindow_handler_ref) {
 		return;
 	}
-	napi_value global = nullptr;
-	napi_get_global(subwindow_env, &global);
-	napi_value fn = nullptr;
-	napi_get_reference_value(subwindow_env, subwindow_handler_ref, &fn);
-	napi_value op = nullptr, id = nullptr, a = nullptr, b = nullptr, c = nullptr, d = nullptr, title = nullptr;
-	napi_create_int32(subwindow_env, p_op, &op);
-	napi_create_int32(subwindow_env, p_id, &id);
-	napi_create_int32(subwindow_env, p_a, &a);
-	napi_create_int32(subwindow_env, p_b, &b);
-	napi_create_int32(subwindow_env, p_c, &c);
-	napi_create_int32(subwindow_env, p_d, &d);
-	napi_create_string_utf8(subwindow_env, p_title ? p_title : "", p_title ? strlen(p_title) : 0, &title);
-	napi_value argv[7] = { op, id, a, b, c, d, title };
-	napi_value result = nullptr;
-	napi_call_function(subwindow_env, global, fn, 7, argv, &result);
+	// 经 tsfn 投递到 JS 主线程（引擎线程不能直接 napi_call_function）
+	Vector<OHOS_TSFNArg> args;
+	OHOS_TSFNArg v;
+	auto add_int = [&](int32_t val) {
+		v.type = OHOS_TSFNArg::Type::INT;
+		v.i = val;
+		args.push_back(v);
+	};
+	add_int(p_op);
+	add_int(p_id);
+	add_int(p_a);
+	add_int(p_b);
+	add_int(p_c);
+	add_int(p_d);
+	OHOS_TSFNArg t;
+	t.type = OHOS_TSFNArg::Type::STRING;
+	t.s = p_title ? p_title : "";
+	args.push_back(t);
+	(void)ohos_tsfn_invoke(subwindow_env, subwindow_handler_ref, args, false);
 }
 
 void ohos_subwindow_create(int p_id, int p_x, int p_y, int p_w, int p_h) {
@@ -384,20 +546,12 @@ static napi_value engine_register_pointer_handler(napi_env env, napi_callback_in
 }
 
 void ohos_mouse_set_visible(bool p_visible) {
-	// 设置系统指针可见性（对应 macOS CGDisplayHideCursor）
+	// 设置系统指针可见性（对应 macOS CGDisplayHideCursor）。引擎线程调用，tsfn 投递。
 	MutexLock lock(pointer_mutex);
 	if (!pointer_env || !pointer_handler_ref) {
 		return;
 	}
-	napi_value global = nullptr;
-	napi_get_global(pointer_env, &global);
-	napi_value fn = nullptr;
-	napi_get_reference_value(pointer_env, pointer_handler_ref, &fn);
-	napi_value visible = nullptr;
-	napi_get_boolean(pointer_env, p_visible, &visible);
-	napi_value argv[1] = { visible };
-	napi_value result = nullptr;
-	napi_call_function(pointer_env, global, fn, 1, argv, &result);
+	ohos_tsfn_bool(pointer_env, pointer_handler_ref, p_visible);
 }
 
 // ---- 光标形状桥（第 8 轮：@ohos.multimodalInput.pointer.setPointerStyle） ----
@@ -426,19 +580,12 @@ static napi_value engine_register_cursor_handler(napi_env env, napi_callback_inf
 
 void ohos_cursor_set_shape(int p_shape) {
 	// 请求 ArkTS 切换系统光标（Godot CursorShape -> PointerStyle 映射在 ArkTS 侧）
+	// 引擎线程调用，经 tsfn 投递到 JS 主线程执行。
 	MutexLock lock(cursor_mutex);
 	if (!cursor_env || !cursor_handler_ref) {
 		return;
 	}
-	napi_value global = nullptr;
-	napi_get_global(cursor_env, &global);
-	napi_value fn = nullptr;
-	napi_get_reference_value(cursor_env, cursor_handler_ref, &fn);
-	napi_value shape = nullptr;
-	napi_create_int32(cursor_env, p_shape, &shape);
-	napi_value argv[1] = { shape };
-	napi_value result = nullptr;
-	napi_call_function(cursor_env, global, fn, 1, argv, &result);
+	ohos_tsfn_int(cursor_env, cursor_handler_ref, p_shape);
 }
 
 // ---- 滚轮注入（第 8 轮：触控板双指滚动手势 -> 引擎滚轮事件） ----
@@ -490,16 +637,13 @@ static napi_value engine_register_gamepad_handler(napi_env env, napi_callback_in
 
 void ohos_enumerate_gamepads() {
 	// 请求 ArkTS 枚举输入设备（异步，结果经 engine_gamepad_devices 回传）
+	// 注意：本函数由引擎线程（OS::initialize_joypads）调用，不能直接
+	// napi_call_function（会触发 EcmaVM::CheckThread 崩溃），必须投递到 JS 主线程。
 	MutexLock lock(gamepad_mutex);
 	if (!gamepad_env || !gamepad_handler_ref) {
 		return;
 	}
-	napi_value global = nullptr;
-	napi_get_global(gamepad_env, &global);
-	napi_value fn = nullptr;
-	napi_get_reference_value(gamepad_env, gamepad_handler_ref, &fn);
-	napi_value result = nullptr;
-	napi_call_function(gamepad_env, global, fn, 0, nullptr, &result);
+	ohos_tsfn_notify(gamepad_env, gamepad_handler_ref);
 }
 
 // ArkTS 回传手柄设备 JSON 数组（Index.ets: godot.gamepadDevices(json)）
@@ -649,56 +793,149 @@ static std::string get_string_param(napi_env env, napi_value value) {
 	return str;
 }
 
+// ---- 引擎线程诊断日志（与 display_server_ohos.cpp 的 ohos_diag_log 同路径） ----
+// 卡死/崩溃场景下 hilog 的 LOG_APP 域可能丢失，关键阶段同时写沙盒 cacheDir
+// 下的诊断文件，事后 hdc file recv 直接读取定位卡住阶段。
+static void ohos_engine_diag(const char *p_fmt, ...) {
+	// 写应用沙盒 cacheDir（NAPI 注入的 sandbox_cache_dir）；沙盒外路径不可写。
+	std::string diag_path = sandbox_cache_dir;
+	if (diag_path.empty()) {
+		diag_path = "/data/storage/el2/base/haps/entry/cache";
+	}
+	diag_path += "/godot_engine_diag.log";
+	FILE *f = fopen(diag_path.c_str(), "a");
+	if (f) {
+		va_list args;
+		va_start(args, p_fmt);
+		vfprintf(f, p_fmt, args);
+		va_end(args);
+		fprintf(f, "\n");
+		fclose(f);
+	}
+}
+
 // ---- 引擎线程入口：启动 + 主循环迭代 ----
 static void engine_thread_main() {
-	// 引擎线程：跑主循环直到停止
-	// 鸿蒙无传统 main(argc, argv)：构造参数列表。
-	// 若沙盒内存在 main.pck（从 HAP rawfile 提取），以 --main-pack 加载导出游戏。
-	std::vector<std::string> arg_strs;
-	arg_strs.push_back("godot");
-	String main_pack = String::utf8(sandbox_files_dir.c_str()).path_join("main.pck");
-	if (FileAccess::exists(main_pack)) {
-		arg_strs.push_back("--main-pack");
-		arg_strs.push_back(main_pack.utf8().get_data());
-	}
-	std::vector<char *> argv;
-	for (const std::string &s : arg_strs) {
-		argv.push_back(const_cast<char *>(s.c_str()));
-	}
-	int argc = static_cast<int>(argv.size());
+	// 引擎线程：跑主循环直到停止。支持进程内重启（第 10 轮修复）：
+	// 鸿蒙 App 进程由 appspawn 创建，无法 fork/exec 新进程（见
+	// OS_OHOS::create_instance 注释），ProjectManager 打开项目时经
+	// create_instance 记录参数（--path <proj> --editor）并退出主循环；
+	// 本线程在 Main::cleanup 完成后消费参数重新 Main::setup + Main::start，
+	// 以新 main loop（EditorNode）继续迭代 —— 与桌面端「新进程打开编辑器」
+	// 语义等价，修复「创建项目后引擎核心卡住」问题。
+	//
+	// 鸿蒙无传统 main(argc, argv)：每轮构造参数列表。
+	// 首轮若沙盒内存在 main.pck（从 HAP rawfile 提取），以 --main-pack 加载导出游戏。
+	//
+	// 注意：此处位于 Main::setup() 之前，OS_Unix::initialize_core() 尚未执行
+	//（FileAccess::create_func / DirAccess 等均未注册），不能使用 FileAccess 检查文件。
+	// 改用标准 C stat() 检测 main.pck 是否存在，避免 create_func 为 null 导致
+	// FileAccess::create 返回空 Ref 后 FileAccess::exists 空指针崩溃（SIGSEGV）。
+	bool first_run = true;
+	List<String> restart_args;
+	bool restart = true;
 
-	if (Main::setup(argv[0], argc, argv.data()) != OK) {
-		// 启动失败：直接结束
-		engine_running = false;
-		return;
-	}
-	Main::start();
-
-	// DisplayServer 创建后注入：屏幕刷新率 + XComponent 宿主
-	// （setXComponent 调用早于引擎启动，此处统一挂接）
-	DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
-	if (ds) {
-		ds->set_screen_refresh_rate(screen_refresh_rate);
+	while (restart && engine_running) {
+		// 等待 XComponent Surface 就绪（第 10 轮修复）：
+		// DisplayServerOHOS 构造时需要 OHNativeWindow 已就绪才能创建 Vulkan Surface，
+		// 否则 RenderingDevice::initialize 因 main_surface==0 返回 FAILED，
+		// RendererCompositorRD::make_current() 不被调用，引擎在渲染服务器 _init 崩溃。
+		// on_surface_created 回调运行在 ArkUI 主线程，本子线程 sleep 不阻塞它。
+		// 进程内重启时 Surface 仍在（XComponent 未销毁），此轮询立即通过。
 		if (ohos_xcomponent) {
-			ds->set_main_xcomponent(ohos_xcomponent);
+			for (int i = 0; i < 200 && !ohos_xcomponent->is_surface_ready(); i++) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 最多等 10s
+			}
+			// 注意：LOG_APP 域 + 合法 domain；faultlog 只含系统 core 域，
+			// 关键路径另有文件日志（display_server_ohos.cpp 的 ohos_diag_log）
+			OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "engine_thread: surface ready = %d (run %d)", (int)ohos_xcomponent->is_surface_ready(), first_run ? 1 : 2);
+		}
+
+		std::vector<std::string> arg_strs;
+		arg_strs.push_back("godot");
+		// 强制指定 Vulkan 渲染后端（第 10 轮修复）：
+		// DisplayServerOHOS 构造时仅在 rendering_driver == "vulkan" 时才初始化
+		// RenderingContextDriverVulkanOHOS 并调用 RendererCompositorRD::make_current()。
+		// 若不显式传参，Main::setup 会从项目设置读渲染方法/driver，可能得到空值或
+		// 非 vulkan 值，导致 _create_func 仍为 null，RenderingServerDefault::_init()
+		// 中 RendererCompositor::create() 返回 nullptr 后空指针崩溃（SIGSEGV）。
+		arg_strs.push_back("--rendering-driver");
+		arg_strs.push_back("vulkan");
+		arg_strs.push_back("--rendering-method");
+		arg_strs.push_back("forward_plus");
+
+		if (first_run) {
+			first_run = false;
+			String main_pack = String::utf8(sandbox_files_dir.c_str()).path_join("main.pck");
+			struct stat st;
+			if (stat(main_pack.utf8().get_data(), &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG) {
+				arg_strs.push_back("--main-pack");
+				arg_strs.push_back(main_pack.utf8().get_data());
+			}
+		} else {
+			// 进程内重启：追加 create_instance 记录的参数
+			//（--path <proj> --editor [--recovery-mode] [--verbose] [--run-upgrade-tool]）
+			for (const String &a : restart_args) {
+				arg_strs.push_back(a.utf8().get_data());
+			}
+			OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "engine_thread: in-process restart with %d extra args", (int)restart_args.size());
+		}
+
+		std::vector<char *> argv;
+		for (const std::string &s : arg_strs) {
+			argv.push_back(const_cast<char *>(s.c_str()));
+		}
+		int argc = static_cast<int>(argv.size());
+
+		ohos_engine_diag("engine_thread: Main::setup begin (argc=%d)", argc);
+		if (Main::setup(argv[0], argc, argv.data()) != OK) {
+			// 启动失败：直接结束
+			ohos_engine_diag("engine_thread: Main::setup FAILED");
+			OH_LOG_Print(LOG_APP, LOG_ERROR, 0xD001, "GodotOHOS", "engine_thread: Main::setup failed");
+			engine_running = false;
+			return;
+		}
+		ohos_engine_diag("engine_thread: Main::setup done, calling Main::start");
+		Main::start();
+		ohos_engine_diag("engine_thread: Main::start done, entering iteration loop");
+
+		// DisplayServer 创建后注入：屏幕刷新率 + XComponent 宿主
+		// （setXComponent 调用早于引擎启动，此处统一挂接）
+		DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
+		if (ds) {
+			ds->set_screen_refresh_rate(screen_refresh_rate);
+			if (ohos_xcomponent) {
+				ds->set_main_xcomponent(ohos_xcomponent);
+			}
+		}
+
+		while (engine_running) {
+			// Surface 未就绪（窗口最小化/隐藏/未创建）时休眠节流：
+			// Godot 渲染无 Surface 时 present 等待不会发生，忙轮询会空转 CPU
+			//（对应 macOS CVDisplayLink 帧调度；此处以 60fps 间隔兜底）。
+			if (ohos_xcomponent && !ohos_xcomponent->is_surface_ready()) {
+				OS::get_singleton()->delay_usec(16000);
+			}
+			// 单帧迭代：返回 true 表示引擎请求退出；false 表示继续
+			if (Main::iteration()) {
+				ohos_engine_diag("engine_thread: Main::iteration requested quit");
+				break;
+			}
+		}
+
+		// 收尾：Main::cleanup 内部会删除主循环
+		ohos_engine_diag("engine_thread: Main::cleanup begin");
+		Main::cleanup();
+		ohos_engine_diag("engine_thread: Main::cleanup done");
+
+		// 进程内重启检查（第 10 轮修复）：有 pending 参数则再跑一轮
+		restart = OS_OHOS::consume_pending_restart_args(restart_args);
+		if (restart) {
+			ohos_engine_diag("engine_thread: in-process restart with %d args", (int)restart_args.size());
+			OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "engine_thread: restarting engine in-process");
 		}
 	}
-
-	while (engine_running) {
-		// Surface 未就绪（窗口最小化/隐藏/未创建）时休眠节流：
-		// Godot 渲染无 Surface 时 present 等待不会发生，忙轮询会空转 CPU
-		//（对应 macOS CVDisplayLink 帧调度；此处以 60fps 间隔兜底）。
-		if (ohos_xcomponent && !ohos_xcomponent->is_surface_ready()) {
-			OS::get_singleton()->delay_usec(16000);
-		}
-		// 单帧迭代：返回 true 表示引擎请求退出；false 表示继续
-		if (Main::iteration()) {
-			break;
-		}
-	}
-
-	// 收尾：Main::cleanup 内部会删除主循环
-	Main::cleanup();
+	ohos_engine_diag("engine_thread: exit");
 	engine_running = false;
 }
 
@@ -733,13 +970,13 @@ static napi_value engine_set_xcomponent(napi_env env, napi_callback_info info) {
 	}
 
 	// 模拟 SurfaceCreated 事件注册（回调在 on_surface_created 时已有窗口句柄）。
-	// 实际回调注册依赖 OH_NativeXComponent，需先完成 on_surface_created；
-	// 这里保存原生句柄，注册动作放在 surface 回调后由 register_callbacks 完成。
-	// 为兼容「SurfaceCreated 早于 NAPI 调用」顺序，直接尝试注册。
+	// 实际回调注册依赖 OH_NativeXComponent，需先保存原生句柄再注册回调；
+	// 若先 register_callbacks() 再 set_xcomponent()，注册时 native_xcomponent
+	// 仍为 nullptr，OH_NativeXComponent_RegisterCallback 会失败（第 10 轮修复）。
 	// 注：OH_NativeXComponent_RegisterCallback 在任意时刻调用均可，
 	// 回调触发依赖 Surface 生命周期。
-	ohos_xcomponent->register_callbacks();
 	ohos_xcomponent->set_xcomponent(native_xcomponent);
+	ohos_xcomponent->register_callbacks();
 
 	// 注入 XComponent 到 DisplayServer（若已创建）
 	DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
@@ -766,6 +1003,12 @@ static napi_value engine_initialize(napi_env env, napi_callback_info info) {
 
 	// 注册平台崩溃处理器
 	crash_handler.initialize();
+
+	// 注册引擎日志桥接（print_line/print_error -> hilog），便于 hdc 诊断
+	ohos_print_handler.printfunc = ohos_print_func;
+	add_print_handler(&ohos_print_handler);
+	ohos_error_handler.errfunc = ohos_error_func;
+	add_error_handler(&ohos_error_handler);
 
 	// 创建 OS_OHOS 单例并注入沙盒路径
 	OS_OHOS *os = memnew(OS_OHOS);
