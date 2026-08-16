@@ -424,6 +424,22 @@ interface_coverage: 88%
 - **git 提交**：待填充
 - **下一轮**：无（终轮，输出 final-summary.md）
 
+## 第 11 轮（GLES3/EGL 渲染通道 + 模拟器崩溃根因终局）
+
+- 崩溃根因（4 份 minidump 同栈铁证）：模拟器转译层 vk_decode_invoke+29588
+  free 未分配指针 → abort（EMULATOR_CRASH 802002）；触发序列
+  barrier+copy+submit；Vulkan 原生（forward_plus/mobile）与 GLES 渲染
+  （express_gpu 把 GLES 也翻译成 Vulkan 提交）全部触发；纯清屏 1200 帧
+  可过（GLES 探针 GLES_PROBE_OK frames=1200）。
+- 模拟器渲染验证判定：不可行，唯一出路真机（MateBook Pro 2in1）。
+- 新增 GLES3/EGL 渲染通道（提交 dbf30ac378）：EGLManagerOHOSGLES
+  （EGL_KHR_platform_ohos）+ DisplayServerOHOS opengl3_es 分支 +
+  gl_window_make_current/swap_buffers/window_get_native_handle 桥 +
+  platform_egl.h/platform_gl.h + EGL_STATIC + driver 联动
+  （gl_compatibility→opengl3_es）。引擎命令执行到 submit 阶段，
+  待真机验证渲染画面。
+- 工具链：DevEco 6.1.1 / API 24 Release 全链通过（scons + hvigor）。
+
 ## 说明
 
 - `current_round` 表示当前正在执行的轮次（0 = 未开始）。
