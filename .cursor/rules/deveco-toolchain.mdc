@@ -1,0 +1,45 @@
+---
+description: Godot 鸿蒙移植项目的 DevEco 工具链配置事实（版本、路径、环境变量、权限）
+alwaysApply: true
+---
+
+# DevEco 工具链环境配置（2026-08 更新：26.0.0 Beta2 → 6.1.1 Release 迁移）
+
+## 版本与路径
+
+| 组件 | 版本 | 路径 |
+|------|------|------|
+| DevEco Studio | 6.1.1 | `/Applications/DevEco-Studio.app`（内含 SDK API 24 / hvigor / JBR / node） |
+| Command Line Tools | 6.1.1（SDK 6.1.1.125，API 24 Release） | `~/HarmonyOS/command-line-tools`（HMOS_HOME 指向此处） |
+| hvigorw | 6.24.4（CLI）/ DevEco 内置 | `~/HarmonyOS/command-line-tools/bin/hvigorw` |
+| ohpm | 6.x | `~/HarmonyOS/command-line-tools/ohpm/bin` |
+| hdc | 随 SDK | `~/HarmonyOS/command-line-tools/sdk/default/openharmony/toolchains/hdc` |
+| ohos clang | 随 SDK 24 | `~/HarmonyOS/command-line-tools/sdk/default/openharmony/native/llvm/bin/clang` |
+
+## 环境变量（已写入 ~/.zshrc）
+
+```bash
+export HMOS_HOME=$HOME/HarmonyOS/command-line-tools
+export PATH=$HMOS_HOME/bin:$HMOS_HOME/hvigor/bin:$HMOS_HOME/ohpm/bin:$PATH
+export DEVECO_SDK_HOME="$HMOS_HOME/sdk"
+export OHOS_BASE_SDK_HOME="$HMOS_HOME/sdk"
+export OHPM_HOME="$HMOS_HOME/ohpm"
+```
+
+## 重要事实
+
+- **SDK 版本**：HarmonyOS 6.1.1，API **24**，Release（6.1.1.125）。`build-profile.json5` 中
+  compile/compatible/targetSdkVersion 必须写 `"6.1.1(24)"` 格式。
+- **SDK 探测顺序**（detect.py / build_hap.sh）：`DEVECO_SDK_HOME` 环境变量 >
+  DevEco Studio 内置 SDK（/Applications/DevEco-Studio.app/Contents/sdk）>
+  `~/HarmonyOS/command-line-tools/sdk`。
+- 26.0.0 Beta2 工具链已卸载（DevEco Studio 与 Command Line Tools 均已删除），
+  勿再寻找或使用；API 26 时代的模拟器镜像（~/Library/Huawei/Sdk/system-image/HarmonyOS-7.0.0-B1）
+  与 6.1.1 模拟器不兼容，模拟器需用 API 24 镜像（待下载）。
+- SCons 交叉编译：`scons platform=ohos target=editor arch=arm64`，产物 `bin/libgodot.ohos.editor.arm64.so`。
+  注意 scons 增量检测偶发失效：改动源码后确认输出含 `Compiling shared platform/ohos/<file>`，
+  未出现时删除对应 .o 与 bin/obj 下 .a、bin/libgodot*.so 后重跑。
+- HAP 构建：`cd platform/ohos/deveco && ./build_hap.sh`，产物 `entry-default-signed.hap`。
+  hvigor 偶发 00303168 配置错误：删除 `.hvigor` 与 `entry/build` 后重试。
+- 模拟器：API 24 镜像需从 DevEco Studio Device Manager 下载；命令行 `Emulator -start`
+  受 SN 凭证机制限制（详见 deveco/TESTING.md）。

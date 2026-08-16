@@ -11,7 +11,7 @@ detect.py —— Godot HarmonyOS 平台构建检测与配置
    设置编译宏与链接库。
 
 本文件参照 platform/android/detect.py 与 platform/macos/detect.py 的写法，
-针对 HarmonyOS NEXT（SDK 26 / HarmonyOS 7）做交叉编译适配。
+针对 HarmonyOS 6.1.1（SDK 24 / API 24 Release）做交叉编译适配。
 
 用法：
     scons platform=ohos target=editor arch=arm64
@@ -45,9 +45,11 @@ def _detect_sdk_home():
     env = os.environ.get("DEVECO_SDK_HOME", "")
     if env:
         candidates.append(env)
-    # DevEco Studio 26.0.0 默认 SDK 路径
+    # DevEco Studio 6.1.1 内置 SDK 路径
     candidates.append("/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony")
-    # Command Line Tools 解压路径
+    # Command Line Tools 6.1.1 解压路径（~/.zshrc 的 HMOS_HOME 指向 ~/HarmonyOS/command-line-tools）
+    candidates.append(os.path.expanduser("~/HarmonyOS/command-line-tools/sdk/default/openharmony"))
+    # 旧版路径（已迁移，保留兼容）
     candidates.append(os.path.expanduser("~/command-line-tools/sdk/default/openharmony"))
     for cand in candidates:
         if os.path.isfile(os.path.join(cand, "native", "llvm", "bin", "clang")):
@@ -71,7 +73,7 @@ def get_opts():
 
     return [
         ("DEVECO_SDK_HOME", "Path to the HarmonyOS SDK (native folder parent)", _detect_sdk_home()),
-        ("target_api", "Target HarmonyOS API level (26 = HarmonyOS 7)", "26"),
+        ("target_api", "Target HarmonyOS API level (24 = HarmonyOS 6.1.1)", "24"),
         EnumVariable("platform", "Target platform (ohos)", "ohos", ["ohos"]),
     ]
 
@@ -116,7 +118,7 @@ def configure(env: "SConsEnvironment"):
     if not sdk_home or not os.path.isdir(sdk_home):
         print_error(
             "HarmonyOS SDK not found. Please set DEVECO_SDK_HOME to the OHOS SDK path, e.g.\n"
-            '  export DEVECO_SDK_HOME="/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony"'
+            '  export DEVECO_SDK_HOME="/Users/toro/HarmonyOS/command-line-tools/sdk/default/openharmony"'
         )
         sys.exit(255)
 

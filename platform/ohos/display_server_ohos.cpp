@@ -182,9 +182,21 @@ DisplayServerOHOS::DisplayServerOHOS(const String &p_rendering_driver, DisplaySe
 				memdelete(rendering_device);
 				rendering_device = nullptr;
 			} else {
-				// 注册 Vulkan compositor（否则 RendererCompositor::create() 返回 null）
-				RendererCompositorRD::make_current();
-				ohos_diag_log("DisplayServerOHOS: RendererCompositorRD made current.");
+				// 创建主窗口交换链（第 10 轮修复收尾：此前缺失导致
+				// screen_prepare_for_drawing 报 "A swap chain was not created"、
+				// 渲染路径空指针崩溃——对照 macOS DisplayServerMacOS 构造：
+				// initialize 之后必须 screen_create(MAIN_WINDOW_ID)）。
+				Error sc_err = rendering_device->screen_create(DisplayServerEnums::MAIN_WINDOW_ID);
+				ohos_diag_log("DisplayServerOHOS: screen_create -> %d", (int)sc_err);
+				if (sc_err != OK) {
+					ERR_PRINT(vformat("DisplayServerOHOS: screen_create failed (err=%d).", sc_err));
+					memdelete(rendering_device);
+					rendering_device = nullptr;
+				} else {
+					// 注册 Vulkan compositor（否则 RendererCompositor::create() 返回 null）
+					RendererCompositorRD::make_current();
+					ohos_diag_log("DisplayServerOHOS: RendererCompositorRD made current.");
+				}
 			}
 		}
 	}

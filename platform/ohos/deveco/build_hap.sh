@@ -2,11 +2,11 @@
 # =============================================================================
 # build_hap.sh —— Godot HarmonyOS DevEco 工程一键构建脚本
 #
-# 功能：使用 DevEco Studio 26.0.0 自带的 hvigor 工具链编译 .hap 安装包。
+# 功能：使用 DevEco Studio 6.1.1（HarmonyOS 6.1.1 / API 24）自带的 hvigor 工具链编译 .hap 安装包。
 #       ArkTS 层（Index.ets）+ 原生库（libgodot.so 预编译产物）一并打包。
 #
 # 前置条件：
-#   1. 已安装 DevEco Studio 26.0.0（本脚本自动探测其内置 SDK/工具链/JRE）；
+#   1. 已安装 DevEco Studio 6.1.1（本脚本自动探测其内置 SDK/工具链/JRE）；
 #   2. GODOT_SOURCE_DIR 指向 Godot 源码根目录（或在本脚本同级的 deveco 目录运行）；
 #   3. 引擎原生库已通过 SCons 交叉编译为 entry/libs/arm64-v8a/libgodot.so。
 #
@@ -20,7 +20,7 @@
 # =============================================================================
 set -euo pipefail
 
-# ------------------------- 环境探测（DevEco Studio 26.0.0） -------------------------
+# ------------------------- 环境探测（DevEco Studio 6.1.1） -------------------------
 DEVECO_ROOT="/Applications/DevEco-Studio.app/Contents"
 
 # SDK 根目录（hvigor 需要 DEVECO_SDK_HOME / OHOS_BASE_SDK_HOME 指向含
