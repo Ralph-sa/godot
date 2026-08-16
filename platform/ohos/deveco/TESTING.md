@@ -42,18 +42,17 @@ cd godot/platform/ohos/deveco
 
 ## 4. 已知模拟器限制
 
-- **软件 Vulkan 转译层（express_gpu）**：forward_plus 特性支持不全
-  （D16 采样纹理等大量 ERR 属预期），编辑器渲染时模拟器自身可能崩溃
-  （EMULATOR_CRASH 802002）——**环境限制，非移植代码问题**；
-- 若转译层不稳定：Index.ets 取消注释 `godot.setRenderingMethod('mobile')`
-  （mobile 渲染器特性需求少）；
-- 渲染画面最终验证建议真机（MateBook Pro 2in1）。
-
-## 5. 常见问题
-
-- **HAP 构建偶发失败（hvigor 00303168）**：与 DevEco Studio 的 hvigor
-  守护进程竞争，删除 `.hvigor` 与 `entry/build` 后重试即可；
-- **scons 增量检测**：修改源文件后务必确认输出含
-  `Compiling shared platform/ohos/<file>`；未出现时删除对应 .o 后重跑；
-- **模拟器崩溃后 CLI 起不来**：qemu 不 spawn（快照损坏/对话框阻塞），
+- **软件 Vulkan 转译层（express_gpu）崩溃根因已定位（2026-08-16 两轮 lldb 实测）**：
+  宿主进程在 vk_decode_invoke + 29588 处 free 了一个非 malloc 分配的指针
+  （___BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED 即 abort），
+  触发序列固定为 vkCmdPipelineBarrier + vkCmdCopyBuffer(1 region) + vkQueueSubmit
+  （Godot 每帧 uniform 上传路径 100% 触发；系统 UI 偶发触发）。
+  **纯模拟器 bug（6.1.1.350 / 镜像 6.1.0.125，无可用更新），与移植代码无关**；
+- 已尝试的规避：低分辨率实例（1560x1040，系统 UI 稳定 2 分钟）+
+  mobile 渲染器（崩溃点不变，仍为 vk_decode_invoke+29588）——**无效**；
+- forward_plus 特性支持不全（D16 采样纹理等大量 ERR 属预期）；
+- **渲染画面验证必须走真机**（MateBook Pro 2in1）：真机 GPU 原生 Vulkan，
+  无转译层，本 bug 不存在；模拟器只能验证到「引擎初始化全绿 + Vulkan 命令
+  提交」这一阶段。
+emu 不 spawn（快照损坏/对话框阻塞），
   必须回 DevEco GUI 启动。
