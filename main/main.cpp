@@ -2334,6 +2334,7 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 		GLOBAL_DEF_RST(PropertyInfo(Variant::STRING, "rendering/gl_compatibility/driver.android", PROPERTY_HINT_ENUM, "opengl3"), "opengl3");
 		GLOBAL_DEF_RST(PropertyInfo(Variant::STRING, "rendering/gl_compatibility/driver.ios", PROPERTY_HINT_ENUM, "opengl3"), "opengl3");
 		GLOBAL_DEF_RST(PropertyInfo(Variant::STRING, "rendering/gl_compatibility/driver.macos", PROPERTY_HINT_ENUM, "opengl3,opengl3_angle"), "opengl3");
+		GLOBAL_DEF_RST(PropertyInfo(Variant::STRING, "rendering/gl_compatibility/driver.ohos", PROPERTY_HINT_ENUM, "opengl3_es"), "opengl3_es");
 
 		GLOBAL_DEF_RST("rendering/gl_compatibility/nvidia_disable_threaded_optimization", true);
 		GLOBAL_DEF_RST("rendering/gl_compatibility/fallback_to_angle", true);

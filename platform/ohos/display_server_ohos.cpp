@@ -75,10 +75,16 @@ static void ohos_diag_log(const char *p_fmt, ...) {
 #include "servers/rendering/rendering_device.h"
 #endif
 
+// GLES3/EGL（gl_compatibility 渲染器；EGL_KHR_platform_ohos）
+#ifdef GLES3_ENABLED
+#include "drivers/gles3/rasterizer_gles3.h"
+#include "egl_manager_ohos_gles.h"
+#endif
+
 // 静态创建函数（DisplayServer 注册用），对应 macOS create_func
 static DisplayServer *create_func(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, DisplayServerEnums::Context p_context, int64_t p_parent_window, Error &r_error) {
-	// 骨架期：直接创建 DisplayServerOHOS；渲染驱动不匹配时返回错误
-	if (p_rendering_driver != "vulkan") {
+	// 支持的渲染驱动：vulkan（forward_plus/mobile）与 opengl3_es（gl_compatibility）
+	if (p_rendering_driver != "vulkan" && p_rendering_driver != "opengl3_es") {
 		r_error = ERR_UNAVAILABLE;
 		return nullptr;
 	}
@@ -91,6 +97,9 @@ Vector<String> DisplayServerOHOS::get_rendering_drivers_func() {
 	Vector<String> drivers;
 #if defined(VULKAN_ENABLED)
 	drivers.push_back("vulkan");
+#endif
+#if defined(GLES3_ENABLED)
+	drivers.push_back("opengl3_es");
 #endif
 	return drivers;
 }
@@ -113,6 +122,51 @@ static DisplayServerOHOS *ohos_ds_singleton = nullptr;
 
 DisplayServerOHOS *DisplayServerOHOS::get_singleton_ohos() {
 	return ohos_ds_singleton;
+}
+
+// ---- GL 渲染桥（gl_compatibility） ----
+void DisplayServerOHOS::gl_window_make_current(DisplayServerEnums::WindowID p_window_id) {
+#ifdef GLES3_ENABLED
+	if (egl_manager) {
+		egl_manager->window_make_current(p_window_id);
+	}
+#endif
+}
+
+void DisplayServerOHOS::swap_buffers() {
+#ifdef GLES3_ENABLED
+	if (egl_manager) {
+		egl_manager->swap_buffers();
+	}
+#endif
+}
+
+int64_t DisplayServerOHOS::window_get_native_handle(DisplayServerEnums::HandleType p_handle_type, DisplayServerEnums::WindowID p_window) const {
+	ERR_FAIL_COND_V(p_window != DisplayServerEnums::MAIN_WINDOW_ID, 0);
+#ifdef GLES3_ENABLED
+	if (!egl_manager) {
+		return 0;
+	}
+	switch (p_handle_type) {
+		case DisplayServerEnums::DISPLAY_HANDLE: {
+			return reinterpret_cast<int64_t>(egl_manager->get_display(p_window));
+		}
+		case DisplayServerEnums::OPENGL_CONTEXT: {
+			return reinterpret_cast<int64_t>(egl_manager->get_context(p_window));
+		}
+		case DisplayServerEnums::EGL_DISPLAY: {
+			return reinterpret_cast<int64_t>(egl_manager->get_display(p_window));
+		}
+		case DisplayServerEnums::EGL_CONFIG: {
+			return reinterpret_cast<int64_t>(egl_manager->get_config(p_window));
+		}
+		default: {
+			return 0;
+		}
+	}
+#else
+	return 0;
+#endif
 }
 
 DisplayServerOHOS::DisplayServerOHOS(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, const Vector2i &p_size) {
@@ -202,6 +256,44 @@ DisplayServerOHOS::DisplayServerOHOS(const String &p_rendering_driver, DisplaySe
 	}
 #endif
 
+#ifdef GLES3_ENABLED
+	// GLES3 初始化（gl_compatibility 渲染器，driver=opengl3_es）：
+	// 对照 Wayland DisplayServerWayland 的 opengl3_es 分支——
+	// 创建 EGLManager 派生类，EGL display 用鸿蒙 EGL_KHR_platform_ohos
+	// 扩展（native_display = EGL_DEFAULT_DISPLAY），窗口 surface 直接用
+	// surfaceId 路径创建的 OHNativeWindow。
+	if (rendering_driver == "opengl3_es") {
+		ohos_diag_log("DisplayServerOHOS: entering gles3 init (driver=opengl3_es)");
+		egl_manager = memnew(EGLManagerOHOSGLES);
+		Error init_err = egl_manager->initialize();
+		ohos_diag_log("DisplayServerOHOS: egl initialize -> %d", (int)init_err);
+		Error open_err = (init_err == OK) ? egl_manager->open_display(EGL_DEFAULT_DISPLAY) : init_err;
+		ohos_diag_log("DisplayServerOHOS: egl open_display -> %d", (int)open_err);
+		if (open_err != OK) {
+			memdelete(egl_manager);
+			egl_manager = nullptr;
+			ERR_PRINT("DisplayServerOHOS: EGL display initialization failed.");
+		} else {
+			OHOS_XComponent *xc = OHOS_XComponent::get_instance();
+			OHNativeWindow *native_window = xc ? xc->get_native_window() : nullptr;
+			for (int i = 0; i < 100 && !native_window; i++) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 最多等 5s
+				native_window = xc ? xc->get_native_window() : nullptr;
+			}
+			ohos_diag_log("DisplayServerOHOS: gles3 native_window=%p", (void *)native_window);
+			if (!native_window) {
+				ERR_PRINT("DisplayServerOHOS: native_window not ready, cannot create EGL surface.");
+			} else {
+				Error we = egl_manager->window_create(DisplayServerEnums::MAIN_WINDOW_ID, EGL_DEFAULT_DISPLAY, native_window, p_size.x, p_size.y);
+				ohos_diag_log("DisplayServerOHOS: egl window_create -> %d", (int)we);
+			}
+			// gles_over_gl = false：纯 GLES2/3 API（鸿蒙无桌面 GL）
+			RasterizerGLES3::make_current(false);
+			ohos_diag_log("DisplayServerOHOS: RasterizerGLES3 make_current(false) done");
+		}
+	}
+#endif
+
 	print_line(vformat("DisplayServerOHOS initialized (%s), window size %dx%d", p_rendering_driver, p_size.x, p_size.y));
 }
 
@@ -224,6 +316,12 @@ DisplayServerOHOS::~DisplayServerOHOS() {
 	if (rendering_context) {
 		memdelete(rendering_context);
 		rendering_context = nullptr;
+	}
+#endif
+#ifdef GLES3_ENABLED
+	if (egl_manager) {
+		memdelete(egl_manager);
+		egl_manager = nullptr;
 	}
 #endif
 	// 释放窗口对象

@@ -36,6 +36,11 @@ import pointer from '@ohos.multimodalInput.pointer';
 // 输入设备（第 8 轮：手柄枚举 inputDevice.getDeviceList）
 import inputDevice from '@ohos.multimodalInput.inputDevice';
 
+// ---- GLES 探针（临时实验开关） ----
+// 为 true 时 onLoad 只调用 godot.testGLES() 做纯 GLES 渲染测试（不启动引擎），
+// 用于验证模拟器 express_gpu 的 GLES 转译是否绕过 vkQueueSubmit 崩溃 bug。
+const GLES_PROBE_ONLY = false; // GLES 探针实验已通过（1200 帧稳定），恢复引擎启动
+
 // 屏幕信息回传引擎（updateDisplays 数据载体）
 interface DisplayInfo {
   x: number;
@@ -94,16 +99,23 @@ struct Index {
           console.info('GodotOHOS setXComponent surfaceId path: ' + surfaceId);
           // Surface 就绪后启动 Godot 引擎
           if (!this.engineStarted) {
-            // 渲染方法：forward_plus 为桌面标准路径；模拟器软件 Vulkan
-            // 转译层（express_gpu）在 forward_plus 渲染负载下会自身崩溃
-            // （API 24/26 模拟器均复现），模拟器强制用 'mobile'（特性需求
-            // 少、更稳定）。真机 2in1 可改回 forward_plus。
-            godot.setRenderingMethod('mobile');
+            if (GLES_PROBE_ONLY) {
+              // GLES 探针：只做纯 GLES 清屏渲染（1200 帧），不启动引擎
+              let probeResult: string = godot.testGLES(surfaceId,
+                this.getScreenWidth(), this.getScreenHeight());
+              console.info('GodotOHOS GLES_PROBE result: ' + probeResult);
+            } else {
+            // 渲染方法（第 11 轮）：模拟器 Vulkan 转译层有确定性崩溃 bug
+            // （vk_decode_invoke+29588，forward_plus/mobile 均触发），GLES 探针
+            // 实测 1200 帧稳定 —— 默认 gl_compatibility（driver=opengl3_es）。
+            // 真机 2in1 可改回 'forward_plus'（driver=vulkan 自动联动）。
+            godot.setRenderingMethod('gl_compatibility');
             // 初始化资源管理器（rawfile 读取，如导出的 main.pck）
             godot.initResourceManager(getContext(this).resourceManager);
             godot.initialize(this.getFilesDir(), this.getCacheDir(),
               this.getSystemLanguage(), this.getModelName(), this.getScreenDensity(), this.getRefreshRate());
             godot.start(this.getScreenWidth(), this.getScreenHeight());
+            }
             this.engineStarted = true;
           }
         })

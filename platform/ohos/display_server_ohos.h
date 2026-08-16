@@ -44,6 +44,9 @@
 #ifdef VULKAN_ENABLED
 #include "drivers/vulkan/rendering_context_driver_vulkan.h"
 #include "servers/rendering/rendering_device.h"
+#ifdef GLES3_ENABLED
+#include "egl_manager_ohos_gles.h"
+#endif
 #endif
 
 /* DisplayServerOHOS：HarmonyOS 显示服务器。
@@ -87,6 +90,13 @@ private:
 	RenderingContextDriverVulkan *rendering_context = nullptr;
 	RenderingDevice *rendering_device = nullptr;
 
+	// ---- GLES3/EGL 上下文管理（gl_compatibility 渲染器） ----
+	// 对应 Wayland DisplayServer 的 egl_manager；驱动为 opengl3_es 时
+	// 构造期创建 EGL display/context/surface（EGL_KHR_platform_ohos）。
+#ifdef GLES3_ENABLED
+	EGLManager *egl_manager = nullptr;
+#endif
+
 	// 主窗口尺寸
 	Size2i window_size;
 
@@ -129,6 +139,11 @@ public:
 	// ---- 渲染驱动 ----
 	static Vector<String> get_rendering_drivers_func();
 	String get_rendering_driver() const { return rendering_driver; }
+
+	// ---- GL 渲染桥（gl_compatibility；对应 Wayland 同名实现） ----
+	virtual void gl_window_make_current(DisplayServerEnums::WindowID p_window_id) override;
+	virtual void swap_buffers() override;
+	virtual int64_t window_get_native_handle(DisplayServerEnums::HandleType p_handle_type, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) const override;
 
 	// ---- 光标与鼠标（编辑器必需，第 2 轮） ----
 	virtual void cursor_set_shape(DisplayServerEnums::CursorShape p_shape) override;

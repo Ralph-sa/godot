@@ -1041,14 +1041,15 @@ static void engine_thread_main() {
 
 		std::vector<std::string> arg_strs;
 		arg_strs.push_back("godot");
-		// 强制指定 Vulkan 渲染后端（第 10 轮修复）：
-		// DisplayServerOHOS 构造时仅在 rendering_driver == "vulkan" 时才初始化
-		// RenderingContextDriverVulkanOHOS 并调用 RendererCompositorRD::make_current()。
-		// 若不显式传参，Main::setup 会从项目设置读渲染方法/driver，可能得到空值或
-		// 非 vulkan 值，导致 _create_func 仍为 null，RenderingServerDefault::_init()
-		// 中 RendererCompositor::create() 返回 nullptr 后空指针崩溃（SIGSEGV）。
+		// 渲染驱动随渲染方法联动（第 11 轮）：
+		//  - forward_plus/mobile → vulkan（RenderingContextDriverVulkanOHOS）；
+		//  - gl_compatibility → opengl3_es（EGLManagerOHOSGLES，GLES3/EGL）。
+		// DisplayServerOHOS 构造时按 rendering_driver 初始化对应上下文，
+		// 必须显式传参（否则 Main::setup 读项目设置可能得到空值/非支持值，
+		// 导致 _create_func 为 null 后 RenderingServer 初始化空指针崩溃）。
+		std::string rendering_driver = (g_rendering_method == "gl_compatibility") ? "opengl3_es" : "vulkan";
 		arg_strs.push_back("--rendering-driver");
-		arg_strs.push_back("vulkan");
+		arg_strs.push_back(rendering_driver);
 		arg_strs.push_back("--rendering-method");
 		arg_strs.push_back(g_rendering_method);
 

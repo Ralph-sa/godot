@@ -95,14 +95,14 @@ def get_flags():
 
     - OHOS 无 main 入口：应用由 ArkTS UIAbility 驱动，C++ 侧是 NAPI 模块，
       因此默认构建为共享库 libgodot.so（与 Android 的 libgodot 一致）；
-    - OHOS 仅支持 Vulkan（OpenGL/EGL 无官方支持），因此显式禁用 opengl3，
-      避免编译 GLES3 驱动时缺失 platform_gl.h。
+    - opengl3 默认启用：鸿蒙提供 libEGL + libGLESv3（EGL_KHR_platform_ohos），
+      GLES 探针实测可用，gl_compatibility 渲染器依赖 GLES3 驱动。
     """
     return {
         "arch": "arm64",
         "target": "editor",
         "vulkan": True,
-        "opengl3": False,
+        "opengl3": True,
         "library_type": "shared_library",
         "supported": ["mono", "library"],
     }
@@ -162,11 +162,6 @@ def configure(env: "SConsEnvironment"):
     env.Append(LIBS=["native_window", "vulkan", "ohaudio", "ohinputmethod", "z", "dl", "pthread"])
     env.Append(LINKFLAGS=["-l:libhilog_ndk.z.so", "-l:libace_ndk.z.so", "-l:libace_napi.z.so", "-l:librawfile.z.so"])
 
-    # GLES3：OHOS 无 EGL 官方支持，强制禁用（即使命令行传入 opengl3=yes）
-    if env["opengl3"]:
-        print("Note: OHOS has no OpenGL/EGL support; ignoring opengl3 option.")
-    env["opengl3"] = False
-
     if env["vulkan"]:
         env.Append(CPPDEFINES=["VULKAN_ENABLED", "RD_ENABLED"])
         # OHOS 场景禁用 volk：volk.h 未适配 VK_OHOS_surface 的类型声明，
@@ -174,9 +169,15 @@ def configure(env: "SConsEnvironment"):
         env["use_volk"] = False
         env.Append(LIBS=["vulkan"])
 
+    # GLES3：鸿蒙提供 libEGL + libGLESv3（EGL_KHR_platform_ohos 扩展，
+    # EGLNativeWindowType = NativeWindow*）。GLES 探针实测 1200 帧渲染
+    # 稳定（模拟器 Vulkan 转译层有崩溃 bug，GLES 通道可绕过），
+    # 启用 opengl3 支持 gl_compatibility 渲染器。
     if env["opengl3"]:
-        env.Append(CPPDEFINES=["GLES3_ENABLED"])
-        env.Append(LIBS=["GLESv3"])
+        env.Append(CPPDEFINES=["GLES3_ENABLED", "EGL_STATIC"])
+        # EGL_STATIC：静态链接 libEGL（鸿蒙无 glad 的 EGL 动态加载需求），
+        # egl_manager 直接调用系统 EGL 函数（对应 EGL_STATIC 宏分支）。
+        env.Append(LIBS=["GLESv3", "EGL"])
 
     # 工具链版本打印（便于构建日志排查）
     print("Building for HarmonyOS (aarch64-linux-ohos), sysroot=%s" % sysroot)
