@@ -1,19 +1,14 @@
-# M12 导出器 Spec
+# M12 导出器 Spec（基于代码核对 2026-08-17）
 
-## 目标
-从鸿蒙编辑器导出自包含 HAP 游戏包。
+## 代码事实（修正旧 spec 的"骨架"判断）
+- export_plugin.cpp 263 行完整实现：get_platform_features/get_preset_features/
+  get_export_options/has_valid_export_configuration/has_valid_project_configuration/
+  export_project 全部有实体——**是完整实现而非骨架**
+- export.cpp 56 行（注册）
 
-## 现状
-- 模板拷贝 + pck + 配置改写骨架存在；DevEco 工程模板细节未完成。
-
-## 验收标准
-- ① 导出流程生成可构建的 DevEco 工程目录
-- ② 生成的工程 build_hap 可出 HAP
-- ③ 验证：引擎侧导出调用 → 目录产物完整（模拟器不安装产物）
-
-## 剩余任务
-- [ ] T-EX-1 补全导出模板（图标/隐私声明/签名配置占位）
-- [ ] T-EX-2 验证导出产物可被 build_hap.sh 构建
+## 任务
+- [ ] T-EX-1 导出模板补全核对：读 export_project 实体确认模板文件清单是否齐全（图标/隐私声明）
+- [ ] T-EX-2 验证：模拟器上引擎触发导出 → 产物目录可被 build_hap.sh 构建
 
 ## 开放项
-- 导出目标设备类型（phone/2in1）与横竖屏配置需用户输入。
+- 导出目标设备类型/横竖屏配置待用户输入。

@@ -1,17 +1,18 @@
-# M01 OS 层 Spec
+# M01 OS 层 Spec（基于代码核对 2026-08-17）
 
-## 目标
-Godot 在鸿蒙上的操作系统抽象：路径、工作目录、进程生命周期、进程内重启。
+## 代码事实
+- set_cwd/get_cwd：✅ 已实现（chdir + getcwd）
+- get_resource_dir：✅ 返回空（修复）
+- create_instance 进程内重启：✅（os_ohos.cpp create_instance 分支）
+- get_unique_id：⚠️ 回退 MAC 地址方案（os_ohos.cpp:289）
+- **shell_open / open_url：❌ 空壳返回 ERR_UNAVAILABLE（os_ohos.cpp:293-297）**
+  ——影响：编辑器帮助菜单打开文档、AssetLib、打开项目文件夹等全部不可用
+- get_system_ca_certificates：⚠️ 需核实（299 行起）
 
-## 验收标准
-- ① sandbox files/cache 目录注入正确（ArkTS 传入，NAPI 解析）
-- ② set_cwd/get_cwd 可用（chdir 项目目录——--path 依赖）
-- ③ get_resource_dir 返回空（否则 ProjectSettings::_setup 走 res:// 分支失败回退 PM）
-- ④ create_instance 进程内重启生效（编辑器打开项目不卡）
-- ⑤ 验证：T01 启动链 PASS（模拟器）
-
-## 状态
-✅ 完成——上述验收全部通过（T01 PASS；globals->setup OK 打点实证）。
+## 任务
+- [ ] T-OS-1 shell_open 实现：NAPI 桥接 ArkTS 侧打开 URI（startAbility 或浏览器）
+- [ ] T-OS-2 get_unique_id 评估：设备标识 API 可用性（对照 openharmony-src）
+- [ ] T-OS-3 核实 get_system_ca_certificates 返回内容（mbedtls 证书错误 ERR -8576 是否相关）
 
 ## 开放项
-- 无。
+- shell_open 的鸿蒙对应能力（@ohos.abilityAccessCtrl? startAbility? browser）需源码确认。

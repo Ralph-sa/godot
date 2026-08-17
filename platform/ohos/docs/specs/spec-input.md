@@ -1,20 +1,15 @@
-# M04 输入链 Spec
+# M04 输入链 Spec（基于代码核对 2026-08-17）
 
-## 目标
-触摸/鼠标/键盘从 ArkTS 到引擎 GUI 的完整链路。
+## 代码事实
+- 透明层触摸接收 / px-vp 比例换算 / 鼠标语义注入 / poll 消费：✅（T04 实证）
+- 键盘：injectKey NAPI + key_mapping 184 个键映射——**未验证**（无键盘注入测试）
+- 滚轮：injectWheel + ArkTS 双指手势——未验证
+- 多点触摸：不支持（单指）
 
-## 验收标准
-- ① Stack 透明层接收触摸（XComponent native 层消费触摸，直接 onTouch 无效）
-- ② 坐标换算用 XComponent px/vp 实际比例（density API 不可信）
-- ③ 注入鼠标语义事件（编辑器桌面 GUI 不认 ScreenTouch）
-- ④ 键盘（onKeyEvent→injectKey）可用
-- ⑤ 验证：T04 输入注入 PASS + 引擎 GUI 处理点击（引擎日志 ERR/print 响应）
-
-## 状态
-✅ 完成（触摸/鼠标已通）。键盘未验证。
-
-## 剩余任务
-- [ ] T-IN-1 键盘验证：模拟器注入按键，确认 injectKey 到引擎、编辑器快捷键可用。
+## 任务
+- [ ] T-IN-1 键盘链路验证：模拟器注入按键 → injectKey → 引擎按键事件（hilog 打点）
+- [ ] T-IN-2 滚轮链路验证：注入 wheel → 引擎 WHEEL 事件
+- [ ] T-IN-3 键位映射完整性核对：对比 Godot Key 枚举与鸿蒙 KeyCode（184 个是否覆盖编辑器快捷键全量）
 
 ## 开放项
-- 多点触摸未支持（当前单指）——编辑器场景是否需要多点？
+- 编辑器常用快捷键（Ctrl+S/O/N 等）依赖组合键——修饰键状态传递是否完整未验。
