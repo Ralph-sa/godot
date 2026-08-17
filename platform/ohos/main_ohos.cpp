@@ -804,6 +804,13 @@ static napi_value engine_inject_touch(napi_env env, napi_callback_info info) {
 	if (xc) {
 		float density = OS_OHOS::get_singleton() ? OS_OHOS::get_singleton()->get_screen_density() : 1.0f;
 		xc->push_touch_event(type, id, Vector2(static_cast<float>(x * density), static_cast<float>(y * density)));
+	} else {
+		// 输入链诊断（第 11 轮：定位模拟器/真机无法交互问题）
+		static int no_xc_count = 0;
+		no_xc_count++;
+		if (no_xc_count <= 5) {
+			ohos_diag_file_write("injectTouch: OHOS_XComponent 不存在");
+		}
 	}
 	return nullptr;
 }

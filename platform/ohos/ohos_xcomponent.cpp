@@ -422,6 +422,19 @@ void OHOS_XComponent::poll_events(const Callable &p_input_event_callback) {
 		events = input_events;
 		input_events.clear();
 	}
+	// 消费诊断（第 11 轮）
+	if (!events.is_empty()) {
+		static int poll_nonempty = 0;
+		poll_nonempty++;
+		if (poll_nonempty <= 5 || poll_nonempty % 100 == 0) {
+			FILE *df = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_input_diag.log", "a");
+			if (df) {
+				fprintf(df, "poll_events: n=%d consumed=%d", poll_nonempty, (int)events.size());
+				fputc('\n', df);
+				fclose(df);
+			}
+		}
+	}
 
 	for (const Ref<InputEvent> &event : events) {
 		p_input_event_callback.call(event);
@@ -514,6 +527,17 @@ void OHOS_XComponent::push_key_event(int p_ohos_keycode, bool p_pressed) {
 }
 
 void OHOS_XComponent::push_touch_event(int p_type, int p_id, const Vector2 &p_pos) {
+	// 输入链诊断（第 11 轮）
+	static int touch_push_count = 0;
+	touch_push_count++;
+	if (touch_push_count <= 5 || touch_push_count % 100 == 0) {
+		FILE *df = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_input_diag.log", "a");
+		if (df) {
+			fprintf(df, "push_touch: n=%d type=%d id=%d pos=(%.0f,%.0f) queued=%d", touch_push_count, p_type, p_id, p_pos.x, p_pos.y, (int)input_events.size());
+			fputc('\n', df);
+			fclose(df);
+		}
+	}
 	// ArkTS onTouch 注入（单指）：type 0=按下 1=移动 2=抬起 3=取消。
 	if (p_type == 0 || p_type == 2) {
 		Ref<InputEventScreenTouch> ev;

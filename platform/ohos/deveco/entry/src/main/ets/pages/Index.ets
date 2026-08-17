@@ -137,6 +137,7 @@ struct Index {
           this.engineStarted = false;
         })
         .onTouch((event: TouchEvent) => {
+          console.info('GodotOHOS onTouch fired type=' + event.type);
           // 第 10 轮修复：surfaceId 路径下原生触摸回调不可用，
           // ArkTS 通用触摸事件分两路注入引擎：
           //  - 双指：触控板滚动手势（第 8 轮，注入滚轮事件）；
