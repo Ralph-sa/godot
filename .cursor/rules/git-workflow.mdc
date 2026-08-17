@@ -1,0 +1,67 @@
+---
+description: GodotHMOS 移植项目的提交与验证工作流规则
+alwaysApply: true
+---
+
+# GodotHMOS 移植工作流规则
+
+## 1. 仓库与分支
+
+- 远程：`origin` = godotengine/godot（上游）；`ralph` = https://github.com/Ralph-sa/godot（用户仓库）
+- 工作分支：`godotOHS`（基于 hm 分支，包含全部移植历史）
+- **每一次问题修复 + 验证通过后，立即提交并推送到 ralph 远程的 godotOHS 分支**：
+
+```bash
+git add <修复文件>
+git commit -m "fix(ohos): <修复摘要>"
+git push ralph godotOHS
+```
+
+- 推送需 GitHub 凭据（PAT 或 gh auth login）；凭据未配置时先记录待推送提交。
+
+## 2. 验证环境
+
+- **真机**：Mate 80 Pro Max（API 26，GLES3 Compatibility + Maleoon 935）——最终验证标准
+- **模拟器**：GodotEditor24LR（API 24 低分辨率实例）——快速迭代验证
+  - 模拟器 express_gpu 的 GLES 渲染路径稳定（EGL 回退后完整渲染编辑器）
+  - 模拟器 Vulkan 翻译层有崩溃 bug（vk_decode_invoke+29588 malloc），禁止在模拟器用 Vulkan 渲染方法
+- 模拟器 hdc 双设备时用 `hdc -t 127.0.0.1:5555 <cmd>` 指定目标
+
+## 3. 部署流程（真机/模拟器通用）
+
+```bash
+# 1. 重编引擎（务必 rm .so 强制重链——scons 增量对 main_ohos 等不可靠）
+rm -f bin/libgodot.ohos.editor.arm64.so <改动对应 .o>
+scons platform=ohos target=editor arch=arm64 -j8
+# 2. 构建 HAP（务必全清 hvigor 缓存）
+cp bin/libgodot.ohos.editor.arm64.so platform/ohos/deveco/entry/libs/arm64-v8a/libgodot.so
+cd platform/ohos/deveco && rm -rf .hvigor entry/build ~/.hvigor && ./build_hap.sh
+# 3. 部署（卸载重装最可靠；.so 更新不走增量安装）
+hdc [-t 127.0.0.1:5555] file send <hap> /data/local/tmp/g.hap
+hdc shell 'bm uninstall -n com.godot.editor; bm install -p /data/local/tmp/g.hap'
+hdc shell aa start -a EntryAbility -b com.godot.editor
+# 4. 读诊断
+hdc shell 'cat /data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_marker.log'
+hdc shell 'cat /data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_engine_diag.log'
+hdc shell 'cat /data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_ds_diag.log'
+```
+
+## 4. 关键坑位（已踩过，勿重蹈）
+
+- **hvigor 缓存**：`.hvigor`、`entry/build`、`~/.hvigor` 必须全删，否则 HAP 打包旧 .so/abc（silent）
+- **scons 增量**：main_ohos.cpp 等目标 .o 不存在时增量失效，必须 rm .so 强制
+- **python 写 C++**：fprintf 的 
+ 转义在 python 脚本里易变成真实换行破坏代码，写完 grep 验证
+- **NAPI 类型**：napi 无 napi_is_number；用 napi_typeof + napi_number/napi_bigint 判断
+- **Godot vformat**：不支持 %p；用 String::num_uint64/itos
+- **版本更新**：.so 不更新时 app.json5 versionCode +1 + 卸载重装
+
+## 5. 诊断体系
+
+| 文件 | 内容 |
+|---|---|
+| godot_marker.log | ohos_marker 启动路径打点（setup/EditorNode/渲染帧计数） |
+| godot_engine_diag.log | 引擎线程生命周期 + ERR 错误 |
+| godot_ds_diag.log | DisplayServer 初始化步骤（EGL/Vulkan 各步返回码 + swap 计数） |
+| godot_crash.log | 崩溃信号 |
+| godot_engine.log | 引擎 print 输出 |
