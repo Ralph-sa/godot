@@ -1,6 +1,6 @@
 # GodotHMOS 移植项目 · 模块规格集（Specs）
 
-> 状态：待审核（2026-08-17 第二轮：基于代码逐文件核对，非记忆总结）。
+> 状态：待审核（2026-08-17 第三轮：补编辑器/引擎功能层 M15-M20，共 20 个模块）。
 > 验证门禁见技能 godot-ohos-verification（模拟器 7 项测试全 PASS）。
 
 ## 模块总览与优先级
@@ -21,6 +21,13 @@
 | M12 | 导出器 | spec-export.md | ✅ 完整实现（263 行实体，修正旧判断） | P2 |
 | M13 | 构建与签名 | spec-build.md | ✅ 调试可用 | P3（生产化） |
 | M14 | 测试体系 | spec-testing.md | ✅ 完成 | — |
+
+| M15 | 编辑器核心工作流 | spec-editor-workflow.md | ⚠️ PM 被跳过（创建/导入项目不可达） | P1 |
+| M16 | 场景编辑 | spec-scene-editor.md | ⏳ 输入链通、画面反馈不可验 | P1 |
+| M17 | 脚本支持 | spec-scripting.md | ✅ GDScript / ❌ C# mono 未编入 | P1（决策点） |
+| M18 | 游戏运行 | spec-game-run.md | ⏳ 播放链路未验证 | P1 |
+| M19 | 资源导入 | spec-import.md | ✅ 15 种导入器编入，运行时未验 | P2 |
+| M20 | 渲染能力 | spec-rendering.md | ⏳ gl_compatibility 2D 完整/3D 基础 | P2 |
 
 ## 任务执行约定
 
