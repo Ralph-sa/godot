@@ -752,6 +752,11 @@ struct Index {
           // API 26：子窗口隐藏使用 minimize()（对子窗口语义为隐藏）
           win.minimize();
         }
+      } else if (op == 5) {
+        // T-DS-3：子窗口置前。鸿蒙无子窗口置前 API（仅主窗口
+        // setWindowTopmost），降级用置顶近似；待系统 API 提供再替换。
+        let win = window.findWindow(key);
+        win.setWindowTopmost(true);
       }
     } catch (e) {
       // 子窗口操作失败：忽略（引擎内窗口状态已记录）

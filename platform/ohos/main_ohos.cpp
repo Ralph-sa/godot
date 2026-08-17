@@ -608,6 +608,11 @@ void ohos_subwindow_set_rect(int p_id, int p_x, int p_y, int p_w, int p_h) {
 	subwindow_call(3, p_id, p_x, p_y, p_w, p_h, nullptr);
 }
 
+void ohos_subwindow_move_to_foreground(int p_id) {
+	// T-DS-3：子窗口置前（op 5；op 4 已被显示/隐藏占用）
+	subwindow_call(5, p_id, 0, 0, 0, 0, nullptr);
+}
+
 void ohos_subwindow_set_visible(int p_id, bool p_visible) {
 	subwindow_call(4, p_id, p_visible ? 1 : 0, 0, 0, 0, nullptr);
 }

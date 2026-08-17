@@ -812,9 +812,16 @@ void DisplayServerOHOS::window_request_attention(DisplayServerEnums::WindowID p_
 }
 
 void DisplayServerOHOS::window_move_to_foreground(DisplayServerEnums::WindowID p_window) {
-	// 窗口前置：鸿蒙侧通过 ArkTS window.moveWindowToFront() 实现（第 4 轮 NAPI 接入）。
-	// 骨架期仅记录。
-	print_verbose("DisplayServerOHOS: window_move_to_foreground (NAPI pending)");
+	// T-DS-3：子窗口置前经 NAPI 桥（ArkTS window.moveWindowToFront）；
+	// 主窗口为 ArkUI 页面自身，置前无意义（忽略）。
+	if (p_window == DisplayServerEnums::MAIN_WINDOW_ID) {
+		return;
+	}
+	if (!windows.has(p_window)) {
+		return;
+	}
+	ohos_subwindow_move_to_foreground(static_cast<int>(p_window));
+	print_verbose(vformat("DisplayServerOHOS: move_to_foreground window %d", p_window));
 }
 
 bool DisplayServerOHOS::window_is_focused(DisplayServerEnums::WindowID p_window) const {
