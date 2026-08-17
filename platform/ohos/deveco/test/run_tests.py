@@ -52,8 +52,10 @@ def main():
     sh(hdc, dev, "rm -f " + CACHE + "/godot_input_diag.log")
     sh(hdc, dev, "uitest uiInput click " + args.tap + " >/dev/null 2>&1")
     time.sleep(2)
+    hl = sh(hdc, dev, "hilog -x 2>/dev/null | grep -E 'injectTouch NAPI|push_touch' | tail -3")
+    check("T04", "input injection", ("injectTouch" in hl or "push_touch" in hl), "hilog " + str(len(hl)) + "B")
+    # T04b 文件日志（NAPI fopen 若可用）
     inp = read_file(hdc, dev, CACHE + "/godot_input_diag.log")
-    check("T04", "input injection", ("injectTouch" in inp or "injectMouse" in inp or "push_touch" in inp), "input " + str(len(inp)) + "B")
     sh(hdc, dev, "uitest screenCap -p /data/local/tmp/t_test.jpeg >/dev/null 2>&1")
     subprocess.run([hdc] + (["-t", dev] if dev else []) + ["file", "recv", "/data/local/tmp/t_test.jpeg", "/tmp/t_test.jpeg"], capture_output=True, timeout=60)
     try:

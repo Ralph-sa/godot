@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "ohos_xcomponent.h"
+#include <hilog/log.h>
 
 #include "display_server_ohos.h"
 #include "key_mapping_ohos.h"
@@ -417,6 +418,11 @@ void OHOS_XComponent::poll_events(const Callable &p_input_event_callback) {
 	// 引擎线程：取出队列全部事件并投递（与 macOS 的 -sendEvent 语义一致）
 	if (!p_input_event_callback.is_valid()) {
 		// 无回调时丢弃事件，避免队列膨胀
+		static int no_cb_count = 0;
+		no_cb_count++;
+		if (no_cb_count <= 3) {
+			OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "poll_events: NO VALID CALLBACK n=%{public}d", no_cb_count);
+		}
 		clear_input_events();
 		return;
 	}
@@ -432,6 +438,7 @@ void OHOS_XComponent::poll_events(const Callable &p_input_event_callback) {
 		static int poll_nonempty = 0;
 		poll_nonempty++;
 		if (poll_nonempty <= 5 || poll_nonempty % 100 == 0) {
+			OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "poll_events: consumed n=%{public}d count=%{public}d", poll_nonempty, (int)events.size());
 			FILE *df = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_input_diag.log", "a");
 			if (df) {
 				fprintf(df, "poll_events: n=%d consumed=%d", poll_nonempty, (int)events.size());
@@ -536,6 +543,7 @@ void OHOS_XComponent::push_touch_event(int p_type, int p_id, const Vector2 &p_po
 	static int touch_push_count = 0;
 	touch_push_count++;
 	if (touch_push_count <= 5 || touch_push_count % 100 == 0) {
+		OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "push_touch: n=%{public}d type=%{public}d pos=(%{public}.0f,%{public}.0f)", touch_push_count, p_type, p_pos.x, p_pos.y);
 		FILE *df = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_input_diag.log", "a");
 		if (df) {
 			fprintf(df, "push_touch: n=%d type=%d id=%d pos=(%.0f,%.0f) queued=%d", touch_push_count, p_type, p_id, p_pos.x, p_pos.y, (int)input_events.size());
@@ -543,30 +551,52 @@ void OHOS_XComponent::push_touch_event(int p_type, int p_id, const Vector2 &p_po
 			fclose(df);
 		}
 	}
-	// ArkTS onTouch 注入（单指）：type 0=按下 1=移动 2=抬起 3=取消。
+	// ArkTS onTouch 注入（第 11 轮修订）：编辑器 GUI 为桌面鼠标语义，
+	// InputEventScreenTouch 不会触发按钮/菜单（Godot 桌面 UI 需鼠标事件或
+	// emulate_mouse_from_touch），改为注入鼠标事件：按下=左键按下、
+	// 移动=鼠标移动、抬起=左键释放。
 	if (p_type == 0 || p_type == 2) {
-		Ref<InputEventScreenTouch> ev;
-		ev.instantiate();
-		ev->set_index(p_id);
-		ev->set_position(p_pos);
-		ev->set_pressed(p_type == 0);
+		Ref<InputEventMouseButton> mb;
+		mb.instantiate();
+		mb->set_button_index(MouseButton::LEFT);
+		mb->set_pressed(p_type == 0);
+		mb->set_position(p_pos);
+		mb->set_global_position(p_pos);
+		mb->set_factor(1.0f);
 		MutexLock lock(input_events_mutex);
-		_enqueue_input_event(ev);
+		_enqueue_input_event(mb);
 		if (p_type == 0) {
 			touch_state[p_id] = p_pos;
+			last_mouse_position = Point2i((int)p_pos.x, (int)p_pos.y);
 		} else {
 			touch_state.erase(p_id);
 		}
 	} else if (p_type == 1) {
-		Ref<InputEventScreenDrag> ev;
-		ev.instantiate();
-		ev->set_index(p_id);
-		ev->set_position(p_pos);
+		// 移动：注入鼠标移动事件（第 11 轮修订，鼠标语义）
+		Ref<InputEventMouseMotion> mm;
+		mm.instantiate();
 		Vector2 rel;
 		if (touch_state.has(p_id)) {
 			rel = p_pos - touch_state[p_id];
 		}
-		ev->set_relative(rel);
+		mm->set_position(p_pos);
+		mm->set_global_position(p_pos);
+		mm->set_relative(rel);
+		mm->set_button_mask(MouseButtonMask::LEFT);
+		touch_state[p_id] = p_pos;
+		last_mouse_position = Point2i((int)p_pos.x, (int)p_pos.y);
+		MutexLock lock(input_events_mutex);
+		_enqueue_input_event(mm);
+	} else if (false && p_type == 1) { // 原 ScreenDrag 路径保留（死代码，后续需要触摸语义时恢复）
+		Ref<InputEventScreenDrag> ev;
+		ev.instantiate();
+		ev->set_index(p_id);
+		ev->set_position(p_pos);
+		Vector2 rel2;
+		if (touch_state.has(p_id)) {
+			rel2 = p_pos - touch_state[p_id];
+		}
+		ev->set_relative(rel2);
 		MutexLock lock(input_events_mutex);
 		_enqueue_input_event(ev);
 		touch_state[p_id] = p_pos;

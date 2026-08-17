@@ -67,6 +67,9 @@ struct Index {
   // 尺寸且单位混乱，以组件实际尺寸为准）
   private xcPxW: number = 0;
   private xcPxH: number = 0;
+  // XComponent vp 尺寸（坐标换算比例用：densityDPI 不可靠）
+  private xcVpW: number = 0;
+  private xcVpH: number = 0;
   // onLoad 获取的 surfaceId（启动延迟到 onAreaChange 拿到真实横屏尺寸后）
   private surfaceIdStr: string = '';
   // native 输入模式（context 含 nativeXComponent 时走原生回调注册）
@@ -95,7 +98,8 @@ struct Index {
   private pendingExports: Map<string, string> = new Map<string, string>();
 
   build() {
-    Column() {
+    Stack() {
+      Column() {
       // 全屏 XComponent：类型 SURFACE，用于承载 Vulkan 渲染。
       // libraryname 必须指定（本应用的 native 库 libgodot.so -> 'godot'）：
       // 未指定时 onLoad 回调的 context 为 undefined（实测 emulator 7.0.0.23），
@@ -204,7 +208,9 @@ struct Index {
           let h: number = Math.round(Number(newArea.height) * density);
           this.xcPxW = w;
           this.xcPxH = h;
-          console.info('GodotOHOS onAreaChange: ' + w + 'x' + h);
+          this.xcVpW = Number(newArea.width);
+          this.xcVpH = Number(newArea.height);
+          console.info('GodotOHOS onAreaChange: vp=' + Number(newArea.width) + 'x' + Number(newArea.height) + ' px=' + w + 'x' + h + ' dpi=' + display.getDefaultDisplaySync().densityDPI + ' dp=' + display.getDefaultDisplaySync().densityPixels);
           if (w > 0 && h > 0) {
             godot.injectResize(w, h);
           }
@@ -250,9 +256,31 @@ struct Index {
         .width('100%')
         .height('100%')
     }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(Color.Black)
+    // 透明事件层（第 11 轮输入修复终案）：XComponent 的 native 层消费触摸
+    // 事件且 API 24/26 无 nativeXComponent 无法注册回调，上层透明 Column
+    // 优先命中测试接收输入，经 NAPI 注入引擎。
+    Column()
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Color.Transparent)
+      .onTouch((event: TouchEvent) => {
+        console.info('GodotOHOS overlay onTouch type=' + event.type);
+        this.injectTouchEvents(event);
+      })
+      .onMouse((event: MouseEvent) => {
+        console.info('GodotOHOS overlay onMouse action=' + event.action);
+        let action: number = event.action;
+        let button: number = event.button;
+        if (event.action != MouseAction.Move) {
+          godot.injectMouse(action, event.x, event.y, button);
+        } else {
+          godot.injectMouse(3, event.x, event.y, button);
+        }
+      })
+  }
+  .width('100%')
+  .height('100%')
+  .backgroundColor(Color.Black)
   }
 
   // 获取应用沙盒 files 目录（鸿蒙 Stage 模型）
@@ -717,6 +745,7 @@ struct Index {
   // TouchType: 0=Down 1=Up 2=Move 3=Cancel；单指时逐触点注入引擎。
   private injectTouchEvents(event: TouchEvent): void {
     let touches = event.touches;
+    console.info('GodotOHOS injectTouchEvents: touches=' + touches.length + ' type=' + event.type);
     if (touches.length != 1) {
       return; // 双指交给滚动手势，多点暂不支持
     }
@@ -725,7 +754,15 @@ struct Index {
     if (type == 3) {
       type = 2; // Cancel 按抬起处理
     }
-    godot.injectTouch(type, t.id, t.x, t.y);
+    // 坐标换算（第 11 轮修订）：模拟器 densityDPI 不可靠（返回 160 但实际
+    // vp->px 比例约 4.8），用 XComponent 实际 px/vp 比例换算。
+    let sx = this.xcVpW > 0 ? this.xcPxW / this.xcVpW : 1.0;
+    let sy = this.xcVpH > 0 ? this.xcPxH / this.xcVpH : 1.0;
+    try {
+      godot.injectTouch(type, t.id, t.x * sx, t.y * sy);
+    } catch (e) {
+      console.error('GodotOHOS injectTouch threw: ' + JSON.stringify(e));
+    }
   }
 
   // ---- 触控板手势（第 8 轮，双指滑动 -> 滚轮注入） ----

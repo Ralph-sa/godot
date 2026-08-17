@@ -798,6 +798,7 @@ static napi_value engine_inject_touch(napi_env env, napi_callback_info info) {
 		static int inject_napi_count = 0;
 		inject_napi_count++;
 		if (inject_napi_count <= 5 || inject_napi_count % 100 == 0) {
+			OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "injectTouch NAPI: n=%d", inject_napi_count);
 			FILE *df = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_input_diag.log", "a");
 			if (df) {
 				fprintf(df, "injectTouch NAPI: n=%d", inject_napi_count);
