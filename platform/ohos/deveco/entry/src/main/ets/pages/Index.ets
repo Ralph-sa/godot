@@ -63,6 +63,12 @@ interface GamepadInfo {
 struct Index {
   // XComponent 控制器
   private xcomponentController: XComponentController = new XComponentController();
+  // XComponent 实际物理尺寸（px，onAreaChange 同步；display API 返回默认方向
+  // 尺寸且单位混乱，以组件实际尺寸为准）
+  private xcPxW: number = 0;
+  private xcPxH: number = 0;
+  // onLoad 获取的 surfaceId（启动延迟到 onAreaChange 拿到真实横屏尺寸后）
+  private surfaceIdStr: string = '';
 
   // 页面级横屏锁定（与 EntryAbility 双保险：手机默认竖屏会压扁编辑器 UI）。
   // API 26 已不支持 module.json5 ability 级 orientation 字段（打包时被丢弃），
@@ -109,29 +115,11 @@ struct Index {
           // OH_NativeWindow_CreateNativeWindowFromSurfaceId 直接创建渲染窗口，
           // 不再依赖 OH_NativeXComponent 上下文对象。
           let surfaceId: string = this.xcomponentController.getXComponentSurfaceId();
-          godot.setXComponent(surfaceId, this.getScreenWidth(), this.getScreenHeight());
-          console.info('GodotOHOS setXComponent surfaceId path: ' + surfaceId);
-          // Surface 就绪后启动 Godot 引擎
-          if (!this.engineStarted) {
-            if (GLES_PROBE_ONLY) {
-              // GLES 探针：只做纯 GLES 清屏渲染（1200 帧），不启动引擎
-              let probeResult: string = godot.testGLES(surfaceId,
-                this.getScreenWidth(), this.getScreenHeight());
-              console.info('GodotOHOS GLES_PROBE result: ' + probeResult);
-            } else {
-            // 渲染方法（第 11 轮）：模拟器 Vulkan 转译层有确定性崩溃 bug
-            // （vk_decode_invoke+29588，forward_plus/mobile 均触发），GLES 探针
-            // 实测 1200 帧稳定 —— 默认 gl_compatibility（driver=opengl3_es）。
-            // 真机 2in1 可改回 'forward_plus'（driver=vulkan 自动联动）。
-            godot.setRenderingMethod('gl_compatibility');
-            // 初始化资源管理器（rawfile 读取，如导出的 main.pck）
-            godot.initResourceManager(getContext(this).resourceManager);
-            godot.initialize(this.getFilesDir(), this.getCacheDir(),
-              this.getSystemLanguage(), this.getModelName(), this.getScreenDensity(), this.getRefreshRate());
-            godot.start(this.getScreenWidth(), this.getScreenHeight());
-            }
-            this.engineStarted = true;
-          }
+          this.surfaceIdStr = surfaceId;
+          console.info('GodotOHOS onLoad surfaceId: ' + surfaceId);
+          // 启动延迟到 onAreaChange（display API 返回默认方向尺寸，横屏下
+          // 宽高颠倒；真实横屏尺寸只能从 XComponent onAreaChange 拿到）
+          this.startEngineIfReady();
         })
         .onBlur(() => {
           // 窗口失焦：通知引擎（XComponent focus 回调仅报告获得焦点）
@@ -182,9 +170,14 @@ struct Index {
           let density: number = this.getScreenDensity();
           let w: number = Math.round(Number(newArea.width) * density);
           let h: number = Math.round(Number(newArea.height) * density);
+          this.xcPxW = w;
+          this.xcPxH = h;
+          console.info('GodotOHOS onAreaChange: ' + w + 'x' + h);
           if (w > 0 && h > 0) {
             godot.injectResize(w, h);
           }
+          // 首次拿到真实尺寸后启动引擎（onLoad 时 onAreaChange 尚未触发）
+          this.startEngineIfReady();
         })
         .onAppear(() => {
           // 页面出现：注册剪贴板回调 + 文件选择器处理（@ohos.pasteboard / @ohos.file.picker）
@@ -277,6 +270,36 @@ struct Index {
     }
   }
 
+  // 启动引擎（前置条件：surfaceId 已获取 + XComponent 真实尺寸已拿到）。
+  // onLoad 与 onAreaChange 触发顺序不定，两者就绪后本方法由任一方调用。
+  private startEngineIfReady(): void {
+    if (this.engineStarted || this.surfaceIdStr.length == 0 || this.xcPxW <= 0 || this.xcPxH <= 0) {
+      return;
+    }
+    // 编辑器桌面布局需要横向窗口：等待横屏尺寸（窗口旋转后 onAreaChange
+    // 会再次触发；手机初始布局为竖屏 1320x2623，横屏锁定后变为 2848x1320）
+    if (this.xcPxW < this.xcPxH) {
+      console.info('GodotOHOS waiting for landscape: ' + this.xcPxW + 'x' + this.xcPxH);
+      return;
+    }
+    console.info('GodotOHOS startEngine: sid=' + this.surfaceIdStr + ' px=' + this.xcPxW + 'x' + this.xcPxH + ' density=1.0-fixed');
+    godot.setXComponent(this.surfaceIdStr, this.xcPxW, this.xcPxH);
+    if (GLES_PROBE_ONLY) {
+      let probeResult: string = godot.testGLES(this.surfaceIdStr, this.xcPxW, this.xcPxH);
+      console.info('GodotOHOS GLES_PROBE result: ' + probeResult);
+    } else {
+      godot.setRenderingMethod('gl_compatibility');
+      godot.initResourceManager(getContext(this).resourceManager);
+      // density 传 1.0（第 11 轮真机修复）：手机 density 3.375 会让 UI
+      // 逻辑尺寸缩到 844x324（2848x1095/3.375），新建项目对话框（~900x600）
+      // 放不下无法渲染。density=1 时 UI 逻辑尺寸=物理像素，完整可见。
+      godot.initialize(this.getFilesDir(), this.getCacheDir(),
+        this.getSystemLanguage(), this.getModelName(), 1.0, this.getRefreshRate());
+      godot.start(this.xcPxW, this.xcPxH);
+    }
+    this.engineStarted = true;
+  }
+
   // 屏幕宽度（vp -> px 换算由引擎侧 density 处理）
   private getScreenWidth(): number {
     try {
@@ -292,6 +315,15 @@ struct Index {
       return display.getDefaultDisplaySync().height;
     } catch (e) {
       return 1080;
+    }
+  }
+
+  // 密度（vp -> px 换算；buffer 几何/EGL surface 需要物理像素）
+  private getDensityPixels(): number {
+    try {
+      return display.getDefaultDisplaySync().densityPixels;
+    } catch (e) {
+      return 1.0;
     }
   }
 

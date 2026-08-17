@@ -221,8 +221,12 @@ String OS_OHOS::get_user_data_dir(const String &p_user_dir) const {
 }
 
 String OS_OHOS::get_resource_dir() const {
-	// 资源目录：鸿蒙应用资源在沙盒内，先回退到可执行目录
-	return get_executable_path().get_base_dir();
+	// 返回空（第 11 轮真机修复）：ProjectSettings::_setup 检测到非空
+	// resource_dir 会直接加载 res://project.godot 并返回（可执行目录里
+	// 没有项目文件 → 加载失败回退项目管理器）。返回空让 _setup 走
+	// filesystem 分支（change_dir(p_path) 加载项目目录）。
+	// 对比 Android：get_resource_dir 为空，同语义。
+	return String();
 }
 
 String OS_OHOS::get_executable_path() const {

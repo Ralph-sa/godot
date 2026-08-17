@@ -42,6 +42,7 @@
 #include <ace/xcomponent/native_interface_xcomponent.h>
 #include <ace/xcomponent/native_xcomponent_key_event.h>
 #include <native_window/external_window.h>
+#include <native_buffer/buffer_common.h>
 
 // 静态实例指针（编辑器主窗口唯一 XComponent）
 OHOS_XComponent *OHOS_XComponent::s_instance = nullptr;
@@ -123,6 +124,15 @@ void OHOS_XComponent::focus_event_cb(OH_NativeXComponent *component, void *windo
 	if (xc) {
 		xc->handle_focus_event(true);
 	}
+}
+
+// ---- Surface 变换（第 11 轮真机修复：GLES Y 轴翻转） ----
+
+void OHOS_XComponent::set_surface_transform(int p_transform) {
+	if (!native_window) {
+		return;
+	}
+	OH_NativeWindow_NativeWindowHandleOpt(native_window, SET_TRANSFORM, p_transform);
 }
 
 // ---- SurfaceId 路径（第 10 轮修复：API 26 无 nativeXComponent 上下文） ----

@@ -79,6 +79,7 @@ static void ohos_diag_log(const char *p_fmt, ...) {
 #ifdef GLES3_ENABLED
 #include "drivers/gles3/rasterizer_gles3.h"
 #include "egl_manager_ohos_gles.h"
+#include <native_buffer/buffer_common.h>
 #endif
 
 // 静态创建函数（DisplayServer 注册用），对应 macOS create_func
@@ -149,6 +150,12 @@ void DisplayServerOHOS::swap_buffers() {
 #ifdef GLES3_ENABLED
 	if (egl_manager) {
 		egl_manager->swap_buffers();
+		// 渲染帧打点（第 11 轮：定位真机画面静止问题）
+		static int swap_count = 0;
+		swap_count++;
+		if (swap_count <= 5 || swap_count % 300 == 0) {
+			ohos_diag_log("swap_buffers: count=%d", swap_count);
+		}
 	}
 #endif
 }
@@ -296,6 +303,11 @@ DisplayServerOHOS::DisplayServerOHOS(const String &p_rendering_driver, DisplaySe
 			if (!native_window) {
 				ERR_PRINT("DisplayServerOHOS: native_window not ready, cannot create EGL surface.");
 			} else {
+				// GLES buffer 原点在左下，鸿蒙合成器按左上合成：垂直翻转。
+				// 必须在 EGL surface 创建前设置（surface 创建时固定 buffer 属性，
+				// 真机实测创建后设置无效）
+				xc->set_surface_transform(NATIVEBUFFER_FLIP_V);
+				ohos_diag_log("DisplayServerOHOS: surface transform FLIP_V set (before window_create)");
 				Error we = egl_manager->window_create(DisplayServerEnums::MAIN_WINDOW_ID, EGL_DEFAULT_DISPLAY, native_window, p_size.x, p_size.y);
 				ohos_diag_log("DisplayServerOHOS: egl window_create -> %d", (int)we);
 			}

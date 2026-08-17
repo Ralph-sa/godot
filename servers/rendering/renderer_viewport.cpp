@@ -29,6 +29,9 @@
 /**************************************************************************/
 
 #include "renderer_viewport.h"
+#ifdef OHOS_ENABLED
+extern "C" void ohos_marker(const char *p_msg);
+#endif
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
@@ -780,6 +783,15 @@ DisplayServerEnums::WindowID RendererViewport::_get_containing_window(Viewport *
 }
 
 void RendererViewport::draw_viewports(bool p_swap_buffers) {
+#ifdef OHOS_ENABLED
+	{
+		static int dv_count = 0;
+		dv_count++;
+		if (dv_count <= 5 || dv_count % 300 == 0) {
+			ohos_marker(("draw_viewports: " + itos(dv_count)).utf8().get_data());
+		}
+	}
+#endif
 	GodotProfileZoneGroupedFirst(_profile_zone, "prepare viewports");
 	timestamp_vp_map.clear();
 

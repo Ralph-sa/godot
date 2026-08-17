@@ -130,6 +130,10 @@ public:
 	// OH_NativeWindow_CreateNativeWindowFromSurfaceId 直接创建窗口（Vulkan 只需
 	// OHNativeWindow）。输入事件后续经 ArkTS onTouch/onMouse 桥注入。
 	void set_native_window_from_surface_id(uint64_t p_surface_id, int p_width, int p_height);
+	// Surface buffer 变换（第 11 轮真机修复：GLES 渲染的 buffer 原点在左下，
+	// 鸿蒙合成器按左上合成，需 NATIVEBUFFER_FLIP_V 垂直翻转；Vulkan 原点
+	// 在左上无需翻转）
+	void set_surface_transform(int p_transform);
 
 	// ---- 输入事件处理（由静态回调调用，运行在 ArkUI 主线程） ----
 	void handle_touch_event(OH_NativeXComponent *p_component, void *p_window);

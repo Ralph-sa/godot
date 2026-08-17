@@ -29,6 +29,9 @@
 /**************************************************************************/
 
 #include "rasterizer_gles3.h"
+#ifdef OHOS_ENABLED
+extern "C" void ohos_marker(const char *p_msg);
+#endif
 
 #ifdef GLES3_ENABLED
 
@@ -122,6 +125,15 @@ void RasterizerGLES3::end_frame(bool p_swap_buffers) {
 }
 
 void RasterizerGLES3::gl_end_frame(bool p_swap_buffers) {
+#ifdef OHOS_ENABLED
+	{
+		static int gend_count = 0;
+		gend_count++;
+		if (gend_count <= 5 || gend_count % 300 == 0) {
+			ohos_marker(("gl_end_frame: " + itos(gend_count) + " swap=" + itos(p_swap_buffers ? 1 : 0)).utf8().get_data());
+		}
+	}
+#endif
 	if (p_swap_buffers) {
 		DisplayServer::get_singleton()->swap_buffers();
 	} else {

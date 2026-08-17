@@ -63,6 +63,9 @@
 #include "main/app_icon.gen.h"
 #include "main/main_timer_sync.h"
 #include "main/performance.h"
+#ifdef OHOS_ENABLED
+extern "C" void ohos_marker(const char *p_msg);
+#endif
 #include "main/splash.gen.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/window.h"
@@ -1693,13 +1696,25 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 #endif // TOOLS_ENABLED
 
 		} else if (arg == "--path") { // set path of project to start or edit
+#ifdef OHOS_ENABLED
+			ohos_marker("setup: --path parsed");
+#endif
 #if defined(OVERRIDE_PATH_ENABLED)
 			if (N) {
 				String p = N->get();
+#ifdef OHOS_ENABLED
+				ohos_marker(("setup: --path value=" + p).utf8().get_data());
+#endif
 				if (OS::get_singleton()->set_cwd(p) != OK) {
+#ifdef OHOS_ENABLED
+					ohos_marker("setup: set_cwd FAILED");
+#endif
 					OS::get_singleton()->print("Invalid project path specified: \"%s\", aborting.\n", p.utf8().get_data());
 					goto error;
 				}
+#ifdef OHOS_ENABLED
+				ohos_marker(("setup: set_cwd OK cwd=" + OS::get_singleton()->get_cwd()).utf8().get_data());
+#endif
 				N = N->next();
 			} else {
 				OS::get_singleton()->print("Missing relative or absolute path, aborting.\n");
@@ -2031,11 +2046,21 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 #endif // defined(DEBUG_ENABLED) || defined (TOOLS_ENABLED)
 
 	OS::get_singleton()->_in_editor = editor;
+#ifdef OHOS_ENABLED
+	ohos_marker(("setup: before globals->setup project_path=" + project_path + " editor=" + (editor ? "1" : "0")).utf8().get_data());
+	ohos_marker(("setup: resource_dir=" + OS::get_singleton()->get_resource_dir() + " exec_path=" + OS::get_singleton()->get_executable_path()).utf8().get_data());
+#endif
 	if (globals->setup(project_path, main_pack, false, editor) == OK) {
+#ifdef OHOS_ENABLED
+		ohos_marker("setup: globals->setup OK");
+#endif
 #ifdef TOOLS_ENABLED
 		found_project = true;
 #endif
 	} else {
+#ifdef OHOS_ENABLED
+		ohos_marker("setup: globals->setup FAILED");
+#endif
 #ifdef TOOLS_ENABLED
 		editor = false;
 #else
@@ -2081,6 +2106,9 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 	if (!project_manager && !editor) {
 		// If we didn't find a project, we fall back to the project manager.
 		project_manager = !found_project && !cmdline_tool;
+#ifdef OHOS_ENABLED
+		ohos_marker(("setup: found_project=" + String(found_project ? "1" : "0") + " project_manager=" + String(project_manager ? "1" : "0") + " editor=" + String(editor ? "1" : "0")).utf8().get_data());
+#endif
 	}
 
 	{
@@ -2187,7 +2215,13 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 	// Initialize user data dir.
 	OS::get_singleton()->ensure_user_data_dir();
 
+	#ifdef OHOS_ENABLED
+	// 第 11 轮真机修复：强制关闭低功耗渲染模式（实测编辑器启动后
+	// low_processor=true 且 has_changed=false，渲染循环不 draw，画面静止）
+	OS::get_singleton()->set_low_processor_usage_mode(false);
+#else
 	OS::get_singleton()->set_low_processor_usage_mode(GLOBAL_DEF("application/run/low_processor_mode", false));
+#endif
 	OS::get_singleton()->set_low_processor_usage_mode_sleep_usec(
 			GLOBAL_DEF(PropertyInfo(Variant::INT, "application/run/low_processor_mode_sleep_usec", PROPERTY_HINT_RANGE, "0,33200,1,or_greater"), 6900)); // Roughly 144 FPS
 
@@ -3083,7 +3117,11 @@ Error Main::setup2(bool p_show_boot_logo) {
 			if (err == OK) {
 				init_screen = config->get_value("EditorWindow", "screen", init_screen);
 				String mode = config->get_value("EditorWindow", "mode", "maximized");
-				window_size = config->get_value("EditorWindow", "size", window_size);
+				// --resolution 显式指定时优先（第 11 轮真机修复：OHOS 无真实窗口管理，
+				// 持久化布局会固定旧尺寸，引擎窗口与 buffer 不一致导致 UI 缩放错位）
+				if (!force_res) {
+					window_size = config->get_value("EditorWindow", "size", window_size);
+				}
 				if (mode == "windowed") {
 					window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
 					init_windowed = true;
@@ -4497,7 +4535,13 @@ int Main::start() {
 #endif // MODULE_GDSCRIPT_ENABLED
 
 		EditorNode *editor_node = nullptr;
+#ifdef OHOS_ENABLED
+		ohos_marker(("start: editor=" + String(editor ? "1" : "0") + " project_manager=" + String(project_manager ? "1" : "0")).utf8().get_data());
+#endif
 		if (editor) {
+#ifdef OHOS_ENABLED
+			ohos_marker("start: editor branch entered");
+#endif
 			OS::get_singleton()->benchmark_begin_measure("Startup", "Editor");
 
 			sml->get_root()->set_translation_domain("godot.editor");
@@ -4506,7 +4550,13 @@ int Main::start() {
 			}
 
 			editor_node = memnew(EditorNode);
+#ifdef OHOS_ENABLED
+			ohos_marker("start: EditorNode created");
+#endif
 			sml->get_root()->add_child(editor_node);
+#ifdef OHOS_ENABLED
+			ohos_marker("start: EditorNode added");
+#endif
 
 
 			if (!_export_preset.is_empty()) {
@@ -4820,6 +4870,15 @@ static uint64_t navigation_process_max = 0;
 // will terminate the program. In case of failure, the OS exit code needs
 // to be set explicitly here (defaults to EXIT_SUCCESS).
 bool Main::iteration() {
+#ifdef OHOS_ENABLED
+	{
+		static int iter_count = 0;
+		iter_count++;
+		if (iter_count <= 5 || iter_count % 300 == 0) {
+			ohos_marker(("iteration: " + itos(iter_count)).utf8().get_data());
+		}
+	}
+#endif
 	GodotProfileZone("Main::iteration");
 	GodotProfileZoneGroupedFirst(_profile_zone, "prepare");
 	iterating++;
@@ -4982,9 +5041,26 @@ bool Main::iteration() {
 	bool wants_present = (DisplayServer::get_singleton()->can_any_window_draw() ||
 								 DisplayServer::get_singleton()->has_additional_outputs()) &&
 			RenderingServer::get_singleton()->is_render_loop_enabled();
+#ifdef OHOS_ENABLED
+	{
+		static int dc_count = 0;
+		dc_count++;
+		if (dc_count <= 8) {
+			ohos_marker(("draw-check: wants=" + itos(wants_present ? 1 : 0) + " low=" + itos(OS::get_singleton()->is_in_low_processor_usage_mode() ? 1 : 0) + " changed=" + itos(RenderingServer::get_singleton()->has_changed() ? 1 : 0) + " can_draw=" + itos(DisplayServer::get_singleton()->can_any_window_draw() ? 1 : 0) + " loop=" + itos(RenderingServer::get_singleton()->is_render_loop_enabled() ? 1 : 0)).utf8().get_data());
+		}
+	}
+#endif
 
 	if (wants_present || has_pending_resources_for_processing) {
 		wants_present |= force_redraw_requested;
+#ifdef OHOS_ENABLED
+		// 第 11 轮真机修复：跳过 low_processor/has_changed 门控，每帧强制渲染。
+		// 真机实测 low_processor_usage_mode 恒为 true（来源不明），has_changed=false
+		// 时渲染循环永不 draw（draw_viewports 仅 1 次），画面停留在残留帧。
+		RenderingServer::get_singleton()->draw(wants_present, scaled_step); // flush visual commands
+		Engine::get_singleton()->increment_frames_drawn();
+		force_redraw_requested = false;
+#else
 		if ((!force_redraw_requested) && OS::get_singleton()->is_in_low_processor_usage_mode()) {
 			if (RenderingServer::get_singleton()->has_changed()) {
 				RenderingServer::get_singleton()->draw(wants_present, scaled_step); // flush visual commands
@@ -4995,6 +5071,7 @@ bool Main::iteration() {
 			Engine::get_singleton()->increment_frames_drawn();
 			force_redraw_requested = false;
 		}
+#endif
 	}
 
 	process_ticks = OS::get_singleton()->get_ticks_usec() - process_begin;

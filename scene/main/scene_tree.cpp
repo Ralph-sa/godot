@@ -29,6 +29,9 @@
 /**************************************************************************/
 
 #include "scene_tree.h"
+#ifdef OHOS_ENABLED
+extern "C" void ohos_marker(const char *p_msg);
+#endif
 
 STATIC_ASSERT_INCOMPLETE_TYPE(class, RenderingServer);
 
@@ -587,7 +590,13 @@ void SceneTree::initialize() {
 	GodotProfileZone("SceneTree::initialize");
 	ERR_FAIL_NULL(root);
 	MainLoop::initialize();
+#ifdef OHOS_ENABLED
+	ohos_marker("SceneTree::initialize: before root->_set_tree");
+#endif
 	root->_set_tree(this);
+#ifdef OHOS_ENABLED
+	ohos_marker("SceneTree::initialize: after root->_set_tree");
+#endif
 }
 
 void SceneTree::set_physics_interpolation_enabled(bool p_enabled) {

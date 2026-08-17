@@ -43,6 +43,7 @@
 #include "core/io/json.h"
 #include "core/math/vector2.h"
 #include "main/main.h"
+#include "core/os/main_loop.h"
 
 #include <napi/native_api.h>
 #include <node_api.h>
@@ -114,6 +115,19 @@ static void ohos_print_func(void *p_userdata, const String &p_string, bool p_err
 
 // 错误同时写诊断文件（hilog 在 DeviceDebuggable:No 设备上会被隐私脱敏成 <private>，
 // 诊断文件 hdc file recv 可读原文）
+// 启动路径打点（main.cpp 以 extern "C" 调用，写独立 marker 文件）
+extern "C" void ohos_marker(const char *p_msg) {
+	FILE *f = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_marker.log", "a");
+	if (!f) {
+		f = fopen("/data/storage/el2/base/haps/entry/cache/godot_marker.log", "a");
+	}
+	if (f) {
+		fprintf(f, "%s", p_msg);
+		fputc('\n', f);
+		fclose(f);
+	}
+}
+
 static void ohos_diag_file_write(const char *p_line) {
 	FILE *f = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_engine_diag.log", "a");
 	if (!f) {
@@ -1052,15 +1066,40 @@ static void engine_thread_main() {
 		arg_strs.push_back(rendering_driver);
 		arg_strs.push_back("--rendering-method");
 		arg_strs.push_back(g_rendering_method);
+		// 窗口尺寸（第 11 轮真机修复）：此前 window_init_width/height 只用于
+		// OHNativeWindow buffer 几何，未传给 Main::setup（DisplayServer 窗口
+		// 一直用默认 1152x800），导致渲染视口与 buffer 不一致、UI 缩放错位。
+		arg_strs.push_back("--resolution");
+		arg_strs.push_back((itos(window_init_width) + "x" + itos(window_init_height)).utf8().get_data());
 
 		if (first_run) {
 			first_run = false;
-			String main_pack = String::utf8(sandbox_files_dir.c_str()).path_join("main.pck");
+			// 第 11 轮真机：跳过项目管理器直接进编辑器。手机触摸注入链路
+			// 未就绪（按钮无法点击），首次启动自动创建默认空项目并带
+			// --editor --path 打开编辑器。
+			String proj_dir = String::utf8(sandbox_files_dir.c_str()).path_join("default_project");
+			mkdir(proj_dir.utf8().get_data(), 0755);
+			String proj_cfg = proj_dir.path_join("project.godot");
 			struct stat st;
-			if (stat(main_pack.utf8().get_data(), &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG) {
-				arg_strs.push_back("--main-pack");
-				arg_strs.push_back(main_pack.utf8().get_data());
+			if (stat(proj_cfg.utf8().get_data(), &st) != 0) {
+				FILE *f = fopen(proj_cfg.utf8().get_data(), "w");
+				if (f) {
+					fprintf(f, "; Godot HarmonyOS default project (round 11 auto-created)");
+					fputc('\n', f);
+					fprintf(f, "config_version=5");
+					fputc('\n', f);
+					fputc('\n', f);
+					fprintf(f, "[application]");
+					fputc('\n', f);
+					fputc('\n', f);
+					fprintf(f, "config/name=\"Default Project\"");
+					fputc('\n', f);
+					fclose(f);
+				}
 			}
+			arg_strs.push_back("--editor");
+			arg_strs.push_back("--path");
+			arg_strs.push_back(proj_dir.utf8().get_data());
 		} else {
 			// 进程内重启：追加 create_instance 记录的参数
 			//（--path <proj> --editor [--recovery-mode] [--verbose] [--run-upgrade-tool]）
@@ -1086,6 +1125,16 @@ static void engine_thread_main() {
 		}
 		ohos_engine_diag("engine_thread: Main::setup done, calling Main::start");
 		Main::start();
+		// main_loop->initialize()（第 11 轮真机修复）：其他平台在 OS::run() 里调用
+		// （Android os_android.cpp:364 / Windows 2353 / Linux 984），OHOS 手动
+		// 迭代循环没有 run()，必须在此补调——否则 SceneTree::initialize 不执行，
+		// root window 不进 ENTER_TREE、window_id 不设 MAIN_WINDOW_ID，
+		// viewport 不 attach 到屏幕（viewport_to_screen=INVALID），
+		// gl_end_frame 永不执行、eglSwapBuffers 只发生一次、画面静止。
+		if (MainLoop *ml = OS::get_singleton()->get_main_loop()) {
+			ohos_engine_diag("engine_thread: calling main_loop->initialize");
+			ml->initialize();
+		}
 		ohos_engine_diag("engine_thread: Main::start done, entering iteration loop");
 
 		// DisplayServer 创建后注入：屏幕刷新率 + XComponent 宿主
@@ -1330,6 +1379,7 @@ static napi_value engine_initialize(napi_env env, napi_callback_info info) {
 		double density = 1.0;
 		napi_get_value_double(env, args[4], &density);
 		os->set_screen_density(static_cast<float>(density));
+		print_line(vformat("Godot Engine initialized with density=%f", density));
 	}
 
 	// 注入屏幕刷新率（@ohos.display refreshRate）
@@ -1343,7 +1393,7 @@ static napi_value engine_initialize(napi_env env, napi_callback_info info) {
 	// 注册 OHOS 显示驱动
 	DisplayServerOHOS::register_ohos_driver();
 
-	print_line("Godot Engine (HarmonyOS) initialized.");
+	print_line("Godot Engine (HarmonyOS) initialized BUILD-20260817-RESFIX.");
 	return nullptr;
 }
 

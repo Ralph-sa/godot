@@ -29,6 +29,9 @@
 /**************************************************************************/
 
 #include "editor_node.h"
+#ifdef OHOS_ENABLED
+extern "C" void ohos_marker(const char *p_msg);
+#endif
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
@@ -8392,6 +8395,9 @@ HashMap<String, Variant> EditorNode::get_initial_settings() {
 }
 
 EditorNode::EditorNode() {
+#ifdef OHOS_ENABLED
+	ohos_marker("EditorNode: ctor entry");
+#endif
 	DEV_ASSERT(!singleton);
 	singleton = this;
 
@@ -8661,6 +8667,9 @@ EditorNode::EditorNode() {
 	editor_selection = memnew(EditorSelection);
 
 	EditorFileSystem *efs = memnew(EditorFileSystem);
+#ifdef OHOS_ENABLED
+	ohos_marker("EditorNode: efs created");
+#endif
 	add_child(efs);
 
 	EditorContextMenuPluginManager::create();
@@ -8676,6 +8685,9 @@ EditorNode::EditorNode() {
 
 	// Exporters might need the theme.
 	EditorThemeManager::initialize();
+#ifdef OHOS_ENABLED
+	ohos_marker("EditorNode: theme initialized");
+#endif
 	theme = EditorThemeManager::generate_theme();
 	DisplayServer::set_early_window_clear_color_override(true, theme->get_color(SNAME("background"), EditorStringName(Editor)));
 
@@ -9694,6 +9706,9 @@ EditorNode::EditorNode() {
 
 	follow_system_theme = EDITOR_GET("interface/theme/follow_system_theme");
 	use_system_accent_color = EDITOR_GET("interface/theme/use_system_accent_color");
+#ifdef OHOS_ENABLED
+	ohos_marker("EditorNode: ctor done");
+#endif
 }
 
 EditorNode::~EditorNode() {

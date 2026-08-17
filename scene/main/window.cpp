@@ -29,6 +29,9 @@
 /**************************************************************************/
 
 #include "window.h"
+#ifdef OHOS_ENABLED
+extern "C" void ohos_marker(const char *p_msg);
+#endif
 
 STATIC_ASSERT_INCOMPLETE_TYPE(class, RenderingServer);
 
@@ -1437,6 +1440,15 @@ void Window::_update_viewport_size() {
 	_set_size(final_size, 1, final_size_override, allocate);
 
 	if (window_id != DisplayServerEnums::INVALID_WINDOW_ID) {
+#ifdef OHOS_ENABLED
+		{
+			static int wa_count = 0;
+			wa_count++;
+			if (wa_count <= 5) {
+				ohos_marker(("window-attach: id=" + itos(window_id) + " n=" + itos(wa_count)).utf8().get_data());
+			}
+		}
+#endif
 		RenderingServer::get_singleton()->viewport_attach_to_screen(get_viewport_rid(), attach_to_screen_rect, window_id);
 	} else if (!is_embedded()) {
 		RenderingServer::get_singleton()->viewport_attach_to_screen(get_viewport_rid(), Rect2i(), DisplayServerEnums::INVALID_WINDOW_ID);
@@ -1647,6 +1659,9 @@ void Window::_notification(int p_what) {
 		} break;
 
 		case NOTIFICATION_ENTER_TREE: {
+#ifdef OHOS_ENABLED
+			ohos_marker("enter-tree: entered");
+#endif
 			if (is_in_edited_scene_root()) {
 				if (!ProjectSettings::get_singleton()->is_connected("settings_changed", callable_mp(this, &Window::_settings_changed))) {
 					ProjectSettings::get_singleton()->connect("settings_changed", callable_mp(this, &Window::_settings_changed));
@@ -1688,6 +1703,9 @@ void Window::_notification(int p_what) {
 					// It's the root window!
 					visible = true; // Always visible.
 					window_id = DisplayServerEnums::MAIN_WINDOW_ID;
+#ifdef OHOS_ENABLED
+					ohos_marker("enter-tree: root window_id=MAIN");
+#endif
 					fullscreen_shortcut_enabled = GLOBAL_GET("display/window/size/enable_toggle_fullscreen_shortcut");
 					focused_window = this;
 					DisplayServer::get_singleton()->window_attach_instance_id(get_instance_id(), window_id);
