@@ -486,6 +486,19 @@ void DisplayServerOHOS::process_events() {
 	}
 }
 
+// ---- 拖拽文件投递（T-XC-1） ----
+
+void DisplayServerOHOS::notify_drop_files(const Vector<String> &p_files) {
+	ERR_FAIL_COND_MSG(!windows.has(DisplayServerEnums::MAIN_WINDOW_ID), "Invalid main window.");
+	const Callable &cb = windows[DisplayServerEnums::MAIN_WINDOW_ID]->get_drop_files_callback();
+	if (cb.is_valid()) {
+		cb.call(p_files);
+		print_verbose(vformat("DisplayServerOHOS: dropped %d files", p_files.size()));
+	} else {
+		print_verbose("DisplayServerOHOS: drop_files_callback not set, ignoring dropped files.");
+	}
+}
+
 // ---- 窗口通知（XComponent 回调触发） ----
 
 void DisplayServerOHOS::notify_main_surface_resized() {

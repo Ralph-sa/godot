@@ -841,6 +841,33 @@ static napi_value engine_inject_touch(napi_env env, napi_callback_info info) {
 	return nullptr;
 }
 
+// 拖拽文件注入（T-XC-1：ArkTS onDrop 回传沙盒路径 JSON 数组）
+static napi_value engine_inject_drop_files(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc >= 1) {
+		char buf[8192] = { 0 };
+		size_t len = 0;
+		if (napi_get_value_string_utf8(env, args[0], buf, sizeof(buf) - 1, &len) == napi_ok) {
+			// 简化解析：逗号分隔 + 去引号（与 filePickerResult 同模式）
+			Vector<String> files;
+			Vector<String> parts = String::utf8(buf).split(",");
+			for (const String &part : parts) {
+				String f = part.strip_edges().trim_prefix(""").trim_suffix(""");
+				if (!f.is_empty()) {
+					files.push_back(f);
+				}
+			}
+			DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
+			if (ds) {
+				ds->notify_drop_files(files);
+			}
+		}
+	}
+	return nullptr;
+}
+
 // ---- 手柄设备枚举桥（第 8 轮：@ohos.multimodalInput.inputDevice） ----
 // 引擎初始化时请求 ArkTS 枚举全部输入设备，过滤 joystick 后回传
 //（对应 macOS IOHIDManagerCopyDevices / Android InputDevice.getDeviceIds）。
@@ -1562,8 +1589,9 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "registerGamepadHandler", nullptr, engine_register_gamepad_handler, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "gamepadDevices", nullptr, engine_gamepad_devices, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "injectDropFiles", nullptr, engine_inject_drop_files, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 23, props);
+	napi_define_properties(env, exports, 24, props);
 	return exports;
 }
 

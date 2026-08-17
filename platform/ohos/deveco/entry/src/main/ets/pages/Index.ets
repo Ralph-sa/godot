@@ -283,6 +283,12 @@ struct Index {
           godot.injectMouse(3, event.x, event.y, button);
         }
       })
+      .onDrop((event: DragEvent) => {
+        // T-XC-1：系统拖拽文件到窗口。引擎侧链路（notify_drop_files + NAPI
+        // injectDropFiles）已完成；UnifiedRecord 的 URI 提取需按记录类型转换
+        //（ImageContent/FileContent），且模拟器无真实拖拽场景，此段待实现。
+        console.info('GodotOHOS overlay onDrop fired (URI extraction TODO)');
+      })
   }
   .width('100%')
   .height('100%')

@@ -264,4 +264,7 @@ public:
 	void ime_attach_for_text_input();
 	// 文本控件失焦/窗口失焦：分离输入法
 	void ime_detach_on_blur();
+
+	// 拖拽文件投递（T-XC-1：ArkTS onDrop -> NAPI -> 主窗口 drop_files_callback）
+	void notify_drop_files(const Vector<String> &p_files);
 };
