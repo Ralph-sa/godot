@@ -77,6 +77,9 @@ void ohos_subwindow_set_visible(int p_id, bool p_visible);
 void ohos_subwindow_move_to_foreground(int p_id);
 void ohos_subwindow_set_topmost(int p_id, bool p_topmost);
 
+// ---- shell_open 桥（T-OS-1：请求 ArkTS 侧打开 URI） ----
+void ohos_shell_open(const String &p_uri);
+
 // ---- 指针可见性桥（第 7 轮：@ohos.multimodalInput.pointer） ----
 // 鼠标捕获/隐藏（对应 macOS CGDisplayHideCursor / CGAssociateMouseAndMouseCursorPosition）
 void ohos_mouse_set_visible(bool p_visible);

@@ -386,6 +386,42 @@ static napi_value engine_register_clipboard(napi_env env, napi_callback_info inf
 	return nullptr;
 }
 
+// ---- shell_open 桥（T-OS-1：编辑器打开文档/链接，ArkTS startAbility 打开 URI） ----
+static napi_env shellopen_env = nullptr;
+static napi_ref shellopen_handler_ref = nullptr; // ArkTS 侧打开 URI 处理函数 (uri) => void
+static Mutex shellopen_mutex;
+
+// ArkTS 注册 shell_open 处理函数（Index.ets onAppear 调用）
+static napi_value engine_register_shell_open(napi_env env, napi_callback_info info) {
+	size_t argc = 1;
+	napi_value args[1];
+	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+	if (argc < 1) {
+		return nullptr;
+	}
+	MutexLock lock(shellopen_mutex);
+	shellopen_env = env;
+	if (shellopen_handler_ref) {
+		napi_delete_reference(env, shellopen_handler_ref);
+	}
+	napi_create_reference(env, args[0], 1, &shellopen_handler_ref);
+	return nullptr;
+}
+
+// 引擎线程调用：请求 ArkTS 打开 URI（异步，不等待结果）
+void ohos_shell_open(const String &p_uri) {
+	MutexLock lock(shellopen_mutex);
+	if (!shellopen_env || !shellopen_handler_ref) {
+		return;
+	}
+	Vector<OHOS_TSFNArg> args;
+	OHOS_TSFNArg arg;
+	arg.type = OHOS_TSFNArg::Type::STRING;
+	arg.s = p_uri.utf8().get_data();
+	args.push_back(arg);
+	(void)ohos_tsfn_invoke(shellopen_env, shellopen_handler_ref, args, false);
+}
+
 // ---- 文件选择器桥（第 5 轮：@ohos.file.picker DocumentViewPicker） ----
 // C++ 侧 DisplayServer::file_dialog_show 触发，经 NAPI 请求 ArkTS 打开系统
 // 文件选择器；ArkTS 选择完成后调用 engine_file_picker_result 回传路径列表，
@@ -1600,8 +1636,9 @@ static napi_value module_init(napi_env env, napi_value exports) {
 		{ "gamepadDevices", nullptr, engine_gamepad_devices, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "dispose", nullptr, engine_dispose, nullptr, nullptr, nullptr, napi_default, nullptr },
 		{ "injectDropFiles", nullptr, engine_inject_drop_files, nullptr, nullptr, nullptr, napi_default, nullptr },
+		{ "registerShellOpen", nullptr, engine_register_shell_open, nullptr, nullptr, nullptr, napi_default, nullptr },
 	};
-	napi_define_properties(env, exports, 24, props);
+	napi_define_properties(env, exports, 25, props);
 	return exports;
 }
 

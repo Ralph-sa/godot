@@ -291,9 +291,15 @@ String OS_OHOS::get_unique_id() const {
 }
 
 Error OS_OHOS::shell_open(const String &p_uri) {
-	// 骨架期：通过 NAPI 桥（main_ohos.cpp 提供）拉起系统打开能力
-	// 第 1 轮返回 ERR_UNAVAILABLE，后续轮次接入 @ohos.childProcess / startAbility
-	return ERR_UNAVAILABLE;
+	// T-OS-1：经 NAPI 桥请求 ArkTS 侧 startAbility 打开 URI
+	//（编辑器帮助文档/AssetLib 链接等场景）。桥未注册时返回 ERR_UNAVAILABLE。
+	if (p_uri.is_empty()) {
+		return ERR_INVALID_PARAMETER;
+	}
+	// 桥注册状态由 main_ohos.cpp 的注册调用建立；此处直接发起请求，
+	// 若 ArkTS 侧未注册（引擎独立运行），桥内静默忽略。
+	ohos_shell_open(p_uri);
+	return OK;
 }
 
 String OS_OHOS::get_system_ca_certificates() {
