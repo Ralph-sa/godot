@@ -156,6 +156,7 @@ struct Index {
         })
         .onBlur(() => {
           // 窗口失焦：通知引擎（XComponent focus 回调仅报告获得焦点）
+          console.info('GodotOHOS XComponent onBlur fired');
           godot.notifyFocus(false);
         })
         .onTouch((event: TouchEvent) => {
@@ -166,6 +167,7 @@ struct Index {
         })
         .onFocus(() => {
           // 窗口获得焦点
+          console.info('GodotOHOS XComponent onFocus fired');
           godot.notifyFocus(true);
         })
         .onDestroy(() => {
@@ -232,8 +234,23 @@ struct Index {
       .width('100%')
       .height('100%')
       .backgroundColor(Color.Transparent)
+      .focusable(true)
+      .focusOnTouch(true)
+      .onFocus(() => {
+        // T-GR 修复：透明事件层抢走了 ArkUI 焦点，XComponent.onFocus 从不触发，
+        // 引擎窗口焦点状态一直为空导致编辑器快捷键（F5 播放等）不生效。
+        console.info('GodotOHOS overlay onFocus fired');
+        godot.notifyFocus(true);
+      })
+      .onBlur(() => {
+        console.info('GodotOHOS overlay onBlur fired');
+        godot.notifyFocus(false);
+      })
       .onTouch((event: TouchEvent) => {
         console.info('GodotOHOS overlay onTouch type=' + event.type);
+        // T-GR 修复：模拟器 ArkUI 焦点回调（onFocus/onBlur）不触发，
+        // 触摸即视为窗口获得焦点，主动通知引擎（快捷键/输入法依赖焦点状态）。
+        godot.notifyFocus(true);
         this.injectTouchEvents(event);
       })
       .onMouse((event: MouseEvent) => {

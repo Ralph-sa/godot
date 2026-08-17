@@ -1377,7 +1377,14 @@ void unregister_scene_types() {
 void register_scene_singletons() {
 	OS::get_singleton()->benchmark_begin_measure("Scene", "Register Singletons");
 
-	GDREGISTER_CLASS(ThemeDB);
+	// OHOS 进程内重启：GDREGISTER_CLASS 不幂等（T::initialize_class 仅首次
+	// add_class），仅首轮注册；add_singleton 每轮执行（cleanup 已删除旧单例，
+	// Engine singleton 表需重新指向新实例）。
+	static bool theme_db_class_registered = false;
+	if (!theme_db_class_registered) {
+		GDREGISTER_CLASS(ThemeDB);
+		theme_db_class_registered = true;
+	}
 
 	Engine::get_singleton()->add_singleton(Engine::Singleton("ThemeDB", ThemeDB::get_singleton()));
 

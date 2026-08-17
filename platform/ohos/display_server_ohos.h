@@ -80,6 +80,18 @@ private:
 	// 瞬态子窗口集合（T-DS-4）：父窗口 -> 其瞬态子窗口 id 集合
 	HashMap<DisplayServerEnums::WindowID, HashSet<DisplayServerEnums::WindowID>> transient_children;
 
+	// 跨线程窗口事件队列（T-GR 修复）：notify_* 由 JS 主线程（NAPI）调用，
+	// 窗口回调（rect_changed / window_event）必须在引擎线程执行，否则触发
+	// SceneTree 线程安全断言。入队后由引擎线程 process_events 消费。
+	struct OHOSWindowEvent {
+		enum Type { RESIZE, FOCUS_IN, FOCUS_OUT } type;
+		Size2i size;
+		OHOSWindowEvent() {}
+		OHOSWindowEvent(Type p_type) : type(p_type) {}
+	};
+	Mutex window_events_mutex;
+	Vector<OHOSWindowEvent> pending_window_events;
+
 	// 主窗口 XComponent 宿主
 	OHOS_XComponent *main_xcomponent = nullptr;
 

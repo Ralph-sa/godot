@@ -484,6 +484,39 @@ void DisplayServerOHOS::process_events() {
 		Callable input_cb = windows[DisplayServerEnums::MAIN_WINDOW_ID]->get_input_event_callback();
 		main_xcomponent->poll_events(input_cb);
 	}
+
+	// 窗口事件消费（T-GR 修复）：resize/焦点回调在引擎线程执行
+	Vector<OHOSWindowEvent> evs;
+	{
+		MutexLock lock(window_events_mutex);
+		if (pending_window_events.is_empty()) {
+			return;
+		}
+		evs = pending_window_events;
+		pending_window_events.clear();
+	}
+	for (const OHOSWindowEvent &ev : evs) {
+		if (!windows.has(DisplayServerEnums::MAIN_WINDOW_ID)) {
+			continue;
+		}
+		OHOS_Window *win = windows[DisplayServerEnums::MAIN_WINDOW_ID];
+		if (ev.type == OHOSWindowEvent::RESIZE) {
+			if (ev.size == window_size) {
+				continue;
+			}
+			window_size = ev.size;
+			win->set_rect(Rect2i(win->get_rect().position, ev.size));
+			Callable rect_cb = win->get_rect_changed_callback();
+			if (rect_cb.is_valid()) {
+				rect_cb.call(win->get_rect());
+			}
+		} else {
+			Callable win_cb = win->get_window_event_callback();
+			if (win_cb.is_valid()) {
+				win_cb.call(ev.type == OHOSWindowEvent::FOCUS_IN ? DisplayServerEnums::WINDOW_EVENT_FOCUS_IN : DisplayServerEnums::WINDOW_EVENT_FOCUS_OUT);
+			}
+		}
+	}
 }
 
 // ---- 拖拽文件投递（T-XC-1） ----
@@ -502,8 +535,9 @@ void DisplayServerOHOS::notify_drop_files(const Vector<String> &p_files) {
 // ---- 窗口通知（XComponent 回调触发） ----
 
 void DisplayServerOHOS::notify_main_surface_resized() {
-	// Surface 尺寸变化：同步窗口尺寸并触发 rect_changed 回调，
-	// 编辑器 Viewport 据此重设渲染尺寸（对应 macOS windowDidResize）
+	// Surface 尺寸变化：入队 RESIZE 事件，引擎线程 process_events 时
+	// 同步窗口尺寸并触发 rect_changed 回调（对应 macOS windowDidResize）。
+	// 本方法由 JS 主线程（injectResize NAPI）调用，回调不能跨线程执行。
 	if (!main_xcomponent || !windows.has(DisplayServerEnums::MAIN_WINDOW_ID)) {
 		return;
 	}
@@ -511,20 +545,17 @@ void DisplayServerOHOS::notify_main_surface_resized() {
 	if (new_size == window_size) {
 		return;
 	}
-	window_size = new_size;
-	OHOS_Window *win = windows[DisplayServerEnums::MAIN_WINDOW_ID];
-	win->set_rect(Rect2i(win->get_rect().position, new_size));
-
-	// 触发 rect_changed 回调（引擎 Viewport 更新）
-	Callable rect_cb = win->get_rect_changed_callback();
-	if (rect_cb.is_valid()) {
-		rect_cb.call(win->get_rect());
-	}
+	MutexLock lock(window_events_mutex);
+	OHOSWindowEvent ev(OHOSWindowEvent::RESIZE);
+	ev.size = new_size;
+	pending_window_events.push_back(ev);
 }
 
 void DisplayServerOHOS::notify_main_surface_focus(bool p_focused) {
-	// 窗口聚焦状态变化：触发 WINDOW_EVENT_FOCUS_IN/OUT
-	// （对应 macOS windowDidBecomeMain / windowDidResignMain）
+	// 窗口聚焦状态变化：入队 FOCUS_IN/OUT 事件，引擎线程 process_events
+	// 时触发 WINDOW_EVENT_FOCUS_IN/OUT 回调（对应 macOS windowDidBecomeMain /
+	// windowDidResignMain）。本方法由 JS 主线程（notifyFocus NAPI）调用，
+	// 回调不能跨线程执行（T-GR 修复：此前直接 call 触发 SceneTree 线程断言）。
 	main_window_focused = p_focused;
 	// 窗口聚焦：重新附加输入法（失焦时已分离）；失焦：分离输入法
 	// （文本控件不再接收组合文本）
@@ -536,10 +567,8 @@ void DisplayServerOHOS::notify_main_surface_focus(bool p_focused) {
 	if (!windows.has(DisplayServerEnums::MAIN_WINDOW_ID)) {
 		return;
 	}
-	Callable cb = windows[DisplayServerEnums::MAIN_WINDOW_ID]->get_window_event_callback();
-	if (cb.is_valid()) {
-		cb.call(p_focused ? DisplayServerEnums::WINDOW_EVENT_FOCUS_IN : DisplayServerEnums::WINDOW_EVENT_FOCUS_OUT);
-	}
+	MutexLock lock(window_events_mutex);
+	pending_window_events.push_back(OHOSWindowEvent(p_focused ? OHOSWindowEvent::FOCUS_IN : OHOSWindowEvent::FOCUS_OUT));
 }
 
 // ---- 光标与鼠标 ----

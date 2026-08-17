@@ -1200,6 +1200,23 @@ static void engine_thread_main() {
 					fputc('\n', f);
 					fprintf(f, "config/name=\"Default Project\"");
 					fputc('\n', f);
+					// T-GR：默认项目可播放——设置主场景（编辑器「播放」走
+					// create_instance 进程内重启加载该场景）
+					fprintf(f, "run/main_scene=\"res://main.tscn\"");
+					fputc('\n', f);
+					fclose(f);
+				}
+			}
+			// T-GR：创建最小可播放场景 main.tscn（空 Node 根节点）
+			String main_scene_path = proj_dir.path_join("main.tscn");
+			if (stat(main_scene_path.utf8().get_data(), &st) != 0) {
+				FILE *f = fopen(main_scene_path.utf8().get_data(), "w");
+				if (f) {
+					fprintf(f, "[gd_scene format=3]");
+					fputc('\n', f);
+					fputc('\n', f);
+					fprintf(f, "[node name=\"Main\" type=\"Node\"]");
+					fputc('\n', f);
 					fclose(f);
 				}
 			}
@@ -1259,6 +1276,13 @@ static void engine_thread_main() {
 			//（对应 macOS CVDisplayLink 帧调度；此处以 60fps 间隔兜底）。
 			if (ohos_xcomponent && !ohos_xcomponent->is_surface_ready()) {
 				OS::get_singleton()->delay_usec(16000);
+			}
+			// T-GR 修复：每帧消费窗口/输入事件。引擎核心 Main::iteration
+			// 只在 macOS 分支调用 DisplayServer::process_events()，OHOS 走
+			// 非 macOS 分支从不调用——触摸/鼠标/键盘事件一直堆积在队列中
+			// 从未投递到引擎（编辑器点击/快捷键全部无效的根因）。
+			if (ds) {
+				ds->process_events();
 			}
 			// 单帧迭代：返回 true 表示引擎请求退出；false 表示继续
 			if (Main::iteration()) {

@@ -696,8 +696,18 @@ Error Main::test_setup() {
 
 	engine = memnew(Engine);
 
-	register_core_types();
-	register_core_driver_types();
+#ifdef OHOS_ENABLED
+	// T-GR：进程内重启幂等化。ClassDB 类型注册不幂等（T::initialize_class
+	// 仅首次 add_class），第二轮 setup 重复注册报 "Parameter t is null" 崩溃。
+	// 首轮注册后保持注册状态跨重启复用，cleanup 侧对应跳过卸载。
+	static bool ohos_types_registered = false;
+	if (!ohos_types_registered) {
+#endif
+		register_core_types();
+		register_core_driver_types();
+#ifdef OHOS_ENABLED
+	}
+#endif
 
 	packed_data = memnew(PackedData);
 
@@ -730,18 +740,36 @@ Error Main::test_setup() {
 
 	// From `Main::setup2()`.
 	register_early_core_singletons();
+#ifdef OHOS_ENABLED
+	if (!ohos_types_registered) {
+#endif
 	initialize_modules(MODULE_INITIALIZATION_LEVEL_CORE);
 	register_core_extensions();
+#ifdef OHOS_ENABLED
+	}
+#endif
 
 	register_core_singletons();
 
 	/** INITIALIZE SERVERS **/
+#ifdef OHOS_ENABLED
+	if (!ohos_types_registered) {
+#endif
 	register_server_types();
+#ifdef OHOS_ENABLED
+	}
+#endif
 #ifndef XR_DISABLED
 	XRServer::set_xr_mode(XRServer::XRMODE_OFF); // Skip in tests.
 #endif // XR_DISABLED
+#ifdef OHOS_ENABLED
+	if (!ohos_types_registered) {
+#endif
 	initialize_modules(MODULE_INITIALIZATION_LEVEL_SERVERS);
 	GDExtensionManager::get_singleton()->initialize_extensions(GDExtension::INITIALIZATION_LEVEL_SERVERS);
+#ifdef OHOS_ENABLED
+	}
+#endif
 
 	translation_server->setup(); //register translations, load them, etc.
 	if (!locale.is_empty()) {
@@ -768,15 +796,30 @@ Error Main::test_setup() {
 	NavigationServer2DManager::initialize_server();
 #endif // NAVIGATION_2D_DISABLED
 
+#ifdef OHOS_ENABLED
+	if (!ohos_types_registered) {
+#endif
 	register_scene_types();
 	register_driver_types();
+#ifdef OHOS_ENABLED
+	}
+#endif
 
 	register_scene_singletons();
 
+#ifdef OHOS_ENABLED
+	if (!ohos_types_registered) {
+#endif
 	initialize_modules(MODULE_INITIALIZATION_LEVEL_SCENE);
 	GDExtensionManager::get_singleton()->initialize_extensions(GDExtension::INITIALIZATION_LEVEL_SCENE);
+#ifdef OHOS_ENABLED
+	}
+#endif
 
 #ifdef TOOLS_ENABLED
+#ifdef OHOS_ENABLED
+	if (!ohos_types_registered) {
+#endif
 	ClassDB::set_current_api(ClassDB::API_EDITOR);
 	register_editor_types();
 
@@ -784,8 +827,18 @@ Error Main::test_setup() {
 	GDExtensionManager::get_singleton()->initialize_extensions(GDExtension::INITIALIZATION_LEVEL_EDITOR);
 
 	ClassDB::set_current_api(ClassDB::API_CORE);
+#ifdef OHOS_ENABLED
+	}
+#endif
+#endif
+#ifdef OHOS_ENABLED
+	if (!ohos_types_registered) {
 #endif
 	register_platform_apis();
+#ifdef OHOS_ENABLED
+		ohos_types_registered = true;
+	}
+#endif
 
 	// Theme needs modules to be initialized so that sub-resources can be loaded.
 	theme_db->initialize_theme_noproject();
@@ -5261,6 +5314,9 @@ void Main::cleanup(bool p_force) {
 	}
 #endif // XR_DISABLED
 
+#ifndef OHOS_ENABLED
+	// T-GR：OHOS 进程内重启保留类型注册与模块初始化（setup 侧幂等跳过），
+	// 此处跳过卸载，否则第二轮 setup 注册状态缺失。
 #ifdef TOOLS_ENABLED
 	GDExtensionManager::get_singleton()->deinitialize_extensions(GDExtension::INITIALIZATION_LEVEL_EDITOR);
 	uninitialize_modules(MODULE_INITIALIZATION_LEVEL_EDITOR);
@@ -5276,6 +5332,7 @@ void Main::cleanup(bool p_force) {
 	unregister_platform_apis();
 	unregister_driver_types();
 	unregister_scene_types();
+#endif // !OHOS_ENABLED
 
 	finalize_theme_db();
 
@@ -5297,8 +5354,10 @@ void Main::cleanup(bool p_force) {
 #endif // PHYSICS_3D_DISABLED
 
 	GDExtensionManager::get_singleton()->deinitialize_extensions(GDExtension::INITIALIZATION_LEVEL_SERVERS);
+#ifndef OHOS_ENABLED
 	uninitialize_modules(MODULE_INITIALIZATION_LEVEL_SERVERS);
 	unregister_server_types();
+#endif // !OHOS_ENABLED
 
 	EngineDebugger::deinitialize();
 
@@ -5340,20 +5399,32 @@ void Main::cleanup(bool p_force) {
 	}
 
 	// Now should be safe to delete MessageQueue (famous last words).
+#ifndef OHOS_ENABLED
 	message_queue->flush();
+#else
+	// OHOS 进程内重启：cleanup 时队列中可能残留指向已 memdelete 对象的
+	// call_deferred（编辑器「播放」前排队），flush 执行会触发 use-after-free
+	//（实测崩溃栈：Callable 展开 Vector<uint8_t> 参数时引用计数损坏）。
+	// 退出/重启场景直接丢弃排队消息（与桌面「杀进程退出」语义一致），
+	// message_queue 析构释放队列内存。
+#endif
 	memdelete(message_queue);
 
 #if defined(STEAMAPI_ENABLED)
 	memdelete(steam_tracker);
 #endif
 
+#ifndef OHOS_ENABLED
 	unregister_core_driver_types();
 	unregister_core_extensions();
 	uninitialize_modules(MODULE_INITIALIZATION_LEVEL_CORE);
+#endif // !OHOS_ENABLED
 
 	memdelete(engine);
 
+#ifndef OHOS_ENABLED
 	unregister_core_types();
+#endif // !OHOS_ENABLED
 
 	OS::get_singleton()->benchmark_end_measure("Shutdown", "Main::Cleanup");
 	OS::get_singleton()->benchmark_dump();

@@ -29,7 +29,6 @@
 /**************************************************************************/
 
 #include "os_ohos.h"
-
 #include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
@@ -41,6 +40,7 @@
 #include "servers/audio/audio_driver.h"
 
 #include "core/os/mutex.h"
+#include "scene/main/scene_tree.h"
 
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -71,6 +71,14 @@ Error OS_OHOS::create_instance(const List<String> &p_arguments, ProcessID *r_chi
 	// 二次调用时 restart_on_exit 已置位，直接返回即可（避免覆盖标志）。
 	if (!is_restart_on_exit_set()) {
 		set_restart_on_exit(true, p_arguments);
+	}
+
+	// T-GR：请求退出当前主循环，触发 Main::cleanup 的 restart_on_exit 分支
+	// 与 main_ohos.cpp 的进程内重启循环。桌面平台播放走独立子进程、编辑器
+	// 不退出；OHOS 无子进程，编辑器「播放」= 记录重启参数 + 引擎重启为游戏。
+	// cleanup 阶段 main_loop 已删除（get_main_loop() 为 null），此调用自动跳过。
+	if (SceneTree *st = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop())) {
+		st->quit();
 	}
 
 	if (r_child_id) {
@@ -146,8 +154,10 @@ void OS_OHOS::initialize() {
 }
 
 void OS_OHOS::finalize() {
-	// 清理核心子系统（OS_Unix 未实现 finalize，直接调用 finalize_core）
-	finalize_core();
+	// T-GR 修复：核心清理交给 Main::cleanup 尾部的 OS::finalize_core()。
+	// 此处若调 finalize_core，会与 cleanup 尾部调用重复——process_map 被
+	// 二次 memdelete，编辑器「播放」退出路径崩溃（实测 SIGSEGV/SIGTRAP）。
+	// 基类 OS::finalize 为空，平台特有资源清理（音频等）后续在此补充。
 }
 
 void OS_OHOS::initialize_joypads() {
