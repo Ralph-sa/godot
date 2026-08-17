@@ -39,6 +39,7 @@
 #include "core/object/object_id.h"
 #include "core/templates/hash_map.h"
 #include "servers/display/display_server.h"
+#include "servers/display/native_menu.h"
 
 // Vulkan 渲染上下文/设备（第 10 轮修复：需完整类型以支持 memnew/memdelete）
 #ifdef VULKAN_ENABLED
@@ -127,6 +128,10 @@ private:
 	// 鼠标模式（编辑器轨道控制用；warp 第 8 轮经 NAPI 模拟）
 	DisplayServerEnums::MouseMode mouse_mode = DisplayServerEnums::MOUSE_MODE_VISIBLE;
 
+	// 原生菜单（第 11 轮修复：NativeMenu 单例缺失导致 ProjectManager/编辑器
+	// 空指针崩溃——鸿蒙无全局菜单，用基类默认实现（has_feature=false））
+	NativeMenu *native_menu = nullptr;
+
 public:
 	// ---- 注册入口（main_ohos.cpp / 全局初始化时调用） ----
 	static void register_ohos_driver();
@@ -143,6 +148,7 @@ public:
 	// ---- GL 渲染桥（gl_compatibility；对应 Wayland 同名实现） ----
 	virtual void gl_window_make_current(DisplayServerEnums::WindowID p_window_id) override;
 	virtual void swap_buffers() override;
+	virtual void release_rendering_thread() override;
 	virtual int64_t window_get_native_handle(DisplayServerEnums::HandleType p_handle_type, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) const override;
 
 	// ---- 光标与鼠标（编辑器必需，第 2 轮） ----

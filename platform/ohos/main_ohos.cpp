@@ -1358,9 +1358,11 @@ static napi_value engine_set_rendering_method(napi_env env, napi_callback_info i
 		char buf[64] = { 0 };
 		size_t len = 0;
 		if (napi_get_value_string_utf8(env, args[0], buf, sizeof(buf) - 1, &len) == napi_ok && len > 0) {
-			if (String(buf) == "mobile" || String(buf) == "forward_plus") {
+			if (String(buf) == "mobile" || String(buf) == "forward_plus" || String(buf) == "gl_compatibility") {
 				g_rendering_method = buf;
 				print_line(vformat("Godot Engine: rendering method set to %s", String(buf)));
+			} else {
+				print_line(vformat("Godot Engine: rendering method rejected: %s", String(buf)));
 			}
 		}
 	}

@@ -4508,6 +4508,7 @@ int Main::start() {
 			editor_node = memnew(EditorNode);
 			sml->get_root()->add_child(editor_node);
 
+
 			if (!_export_preset.is_empty()) {
 				editor_node->export_preset(_export_preset, positional_arg, export_debug, export_pack_only, install_android_build_template, export_patch, patches);
 				game_path = ""; // Do not load anything.
@@ -4710,7 +4711,9 @@ int Main::start() {
 				translation_server->get_editor_domain()->set_pseudolocalization_enabled(true);
 			}
 
+
 			ProjectManager *pmanager = memnew(ProjectManager);
+
 			ProgressDialog *progress_dialog = memnew(ProgressDialog);
 			pmanager->add_child(progress_dialog);
 

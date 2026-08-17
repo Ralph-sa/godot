@@ -128,7 +128,19 @@ DisplayServerOHOS *DisplayServerOHOS::get_singleton_ohos() {
 void DisplayServerOHOS::gl_window_make_current(DisplayServerEnums::WindowID p_window_id) {
 #ifdef GLES3_ENABLED
 	if (egl_manager) {
-		egl_manager->window_make_current(p_window_id);
+		// 强制 make current（第 11 轮修复）：基类的 current_window 地址检查
+		// 会跳过渲染线程的上下文切换（主线程创建窗口时已 make current），
+		// 导致渲染线程无 GL 上下文 → 黑屏。
+		egl_manager->window_force_make_current(p_window_id);
+	}
+#endif
+}
+
+void DisplayServerOHOS::release_rendering_thread() {
+#ifdef GLES3_ENABLED
+	if (egl_manager) {
+		// 主线程释放 GL 上下文，允许渲染线程 eglMakeCurrent 成功
+		egl_manager->release_current();
 	}
 #endif
 }
@@ -294,6 +306,10 @@ DisplayServerOHOS::DisplayServerOHOS(const String &p_rendering_driver, DisplaySe
 	}
 #endif
 
+	// NativeMenu 桩（第 11 轮修复）：基类默认实现，has_feature=false；
+	// 缺失时 ProjectManager::ProjectManager / EditorNode 会空指针崩溃。
+	native_menu = memnew(NativeMenu);
+
 	print_line(vformat("DisplayServerOHOS initialized (%s), window size %dx%d", p_rendering_driver, p_size.x, p_size.y));
 }
 
@@ -324,6 +340,10 @@ DisplayServerOHOS::~DisplayServerOHOS() {
 		egl_manager = nullptr;
 	}
 #endif
+	if (native_menu) {
+		memdelete(native_menu);
+		native_menu = nullptr;
+	}
 	// 释放窗口对象
 	for (const KeyValue<DisplayServerEnums::WindowID, OHOS_Window *> &E : windows) {
 		memdelete(E.value);

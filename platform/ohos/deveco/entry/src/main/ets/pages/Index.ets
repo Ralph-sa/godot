@@ -63,6 +63,20 @@ interface GamepadInfo {
 struct Index {
   // XComponent 控制器
   private xcomponentController: XComponentController = new XComponentController();
+
+  // 页面级横屏锁定（与 EntryAbility 双保险：手机默认竖屏会压扁编辑器 UI）。
+  // API 26 已不支持 module.json5 ability 级 orientation 字段（打包时被丢弃），
+  // 统一走 window.setPreferredOrientation。
+  aboutToAppear(): void {
+    try {
+      window.getLastWindow(getContext(this)).then((w) => {
+        w.setPreferredOrientation(window.Orientation.LANDSCAPE);
+        console.info('GodotOHOS orientation locked to landscape');
+      });
+    } catch (e) {
+      console.error('GodotOHOS setPreferredOrientation failed: ' + JSON.stringify(e));
+    }
+  }
   @State engineStarted: boolean = false;
   // 主窗口 ID（cursor.setPointerStyle 需要；onAppear 时获取）
   private mainWindowId: number = -1;

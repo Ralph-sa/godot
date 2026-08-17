@@ -100,6 +100,12 @@ public:
 
 	void release_current();
 	void swap_buffers();
+#ifdef OHOS_ENABLED
+	// 鸿蒙（第 11 轮修复）：渲染线程切换上下文时基类 window_make_current
+	// 的 current_window 地址检查会跳过（主线程已 make current 过），导致
+	// 渲染线程无 GL 上下文（黑屏）。强制 make current 供 gl_window_make_current 使用。
+	void window_force_make_current(DisplayServerEnums::WindowID p_window_id);
+#endif
 
 	void window_make_current(DisplayServerEnums::WindowID p_window_id);
 

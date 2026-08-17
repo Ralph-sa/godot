@@ -138,7 +138,8 @@ void OHOS_XComponent::set_native_window_from_surface_id(uint64_t p_surface_id, i
 		// Vulkan vkGetPhysicalDeviceSurfaceCapabilitiesKHR/vkCreateSwapchainKHR
 		// 需要窗口具备有效宽高，否则交换链创建失败（屏幕无交换链导致
 		// screen_prepare_for_drawing 报错、渲染路径空指针崩溃）。
-		// 格式/用途由系统为 surface 窗口默认设置，无需额外指定。
+		// 格式由系统为 surface 窗口默认设置（鸿蒙 SDK 不导出 pixel format
+		// 枚举，SET_FORMAT 不可用；EGL 侧用 RGBA8 config 匹配系统默认格式）。
 		OH_NativeWindow_NativeWindowHandleOpt(win, SET_BUFFER_GEOMETRY, p_width, p_height);
 	}
 	// 结果写诊断文件（引擎打印链未注册前 print_verbose 行为不确定，

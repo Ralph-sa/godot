@@ -186,6 +186,22 @@ EGLsizeiANDROID EGLManager::_get_cache(const void *p_key, EGLsizeiANDROID p_key_
 #endif
 
 Error EGLManager::_gldisplay_create_context(GLDisplay &p_gldisplay) {
+#ifdef OHOS_ENABLED
+	// 鸿蒙 libEGL 实测：基类 RGB111 attribs 缺 EGL_SURFACE_TYPE 过滤，
+	// chooseConfig 可能选中 pbuffer-only config，导致 eglCreateWindowSurface
+	// 失败（err=20）。鸿蒙窗口原生格式为 RGBA8888，使用 8 位 RGBA +
+	// WINDOW_BIT 过滤（与 GLES 探针成功配置一致）。
+	EGLint attribs[] = {
+		EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+		EGL_RED_SIZE, 8,
+		EGL_BLUE_SIZE, 8,
+		EGL_GREEN_SIZE, 8,
+		EGL_ALPHA_SIZE, 8,
+		EGL_DEPTH_SIZE, 24,
+		EGL_STENCIL_SIZE, 8,
+		EGL_NONE,
+	};
+#else
 	EGLint attribs[] = {
 		EGL_RED_SIZE,
 		1,
@@ -197,6 +213,7 @@ Error EGLManager::_gldisplay_create_context(GLDisplay &p_gldisplay) {
 		24,
 		EGL_NONE,
 	};
+#endif
 
 	EGLint attribs_layered[] = {
 		EGL_RED_SIZE,
@@ -290,12 +307,19 @@ Error EGLManager::window_create(DisplayServerEnums::WindowID p_window_id, void *
 	}
 #endif
 
+#ifdef OHOS_ENABLED
+	// 鸿蒙 libEGL 实测不支持 eglCreatePlatformWindowSurface（返回 NO_SURFACE，
+	// 探针验证 eglCreateWindowSurface 可用）：EGLNativeWindowType 即
+	// NativeWindow*（OHNativeWindow），直接传窗口指针。
+	glwindow.egl_surface = eglCreateWindowSurface(gldisplay.egl_display, gldisplay.egl_config, (EGLNativeWindowType)p_native_window, nullptr);
+#else
 	if (GLAD_EGL_VERSION_1_5) {
 		glwindow.egl_surface = eglCreatePlatformWindowSurface(gldisplay.egl_display, gldisplay.egl_config, p_native_window, egl_attribs.ptr());
 	} else {
 		EGLNativeWindowType *native_window_type = (EGLNativeWindowType *)p_native_window;
 		glwindow.egl_surface = eglCreateWindowSurface(gldisplay.egl_display, gldisplay.egl_config, *native_window_type, nullptr);
 	}
+#endif
 
 	if (glwindow.egl_surface == EGL_NO_SURFACE) {
 		return ERR_CANT_CREATE;
@@ -351,6 +375,23 @@ void EGLManager::release_current() {
 
 	eglMakeCurrent(current_display.egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 }
+
+#ifdef OHOS_ENABLED
+void EGLManager::window_force_make_current(DisplayServerEnums::WindowID p_window_id) {
+	ERR_FAIL_INDEX(p_window_id, (int)windows.size());
+
+	GLWindow &glwindow = windows[p_window_id];
+	if (!glwindow.initialized) {
+		return;
+	}
+
+	current_window = &glwindow;
+
+	GLDisplay &current_display = displays[current_window->gldisplay_id];
+
+	eglMakeCurrent(current_display.egl_display, current_window->egl_surface, current_window->egl_surface, current_display.egl_context);
+}
+#endif
 
 void EGLManager::swap_buffers() {
 	if (!current_window) {
