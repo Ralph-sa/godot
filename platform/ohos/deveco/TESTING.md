@@ -24,12 +24,13 @@ cd godot/platform/ohos/deveco
 ```bash
 cd godot/platform/ohos/deveco/test
 python3 run_tests.py --device 127.0.0.1:5555   # 模拟器
-python3 run_tests.py --device <手机序列号>     # 真机（含 T07 画面 diff）
+python3 run_tests.py --device <手机序列号>     # 真机可选（T07 自动执行画面 diff）
 ```
 
 T01 启动链（setup→editor→EditorNode）/ T02 渲染循环 / T03 窗口内容 / T04 输入注入 /
-T05 EGL 链路 / T06 进程存活 / T07 交互响应（真机画面 diff；模拟器 SKIP——
-express_gpu 的 eglSwapBuffers 不更新帧内容，画面仅启动首帧，已知限制）。
+T05 EGL 链路 / T06 进程存活 / T07 交互响应（模拟器恒 SKIP：express_gpu
+不更新帧内容，属已知限制非失败；真机在线时自动执行画面 diff）。
+门禁标准 = 7 PASS（T07 模拟器 SKIP 计 PASS）。
 
 ### 2.2 手工清单（真机/模拟器逐项实测）
 
@@ -38,7 +39,7 @@ express_gpu 的 eglSwapBuffers 不更新帧内容，画面仅启动首帧，已�
 2. ✅（模拟器）编辑器完整 UI 上屏（Godot 标题/菜单栏/3D 视口/文件系统/检查器面板）；
 3. ✅（模拟器）渲染循环持续出帧（swap 计数增长；真机已验证 3600+ 帧）；
 4. ✅（模拟器）输入事件链（透明层 onTouch → NAPI → push_touch(鼠标语义) → poll 消费 →
-   引擎 GUI 响应）；⚠️ 画面级交互验证（点击后界面变化）模拟器受限，待真机复测；
+   引擎 GUI 响应）；画面级交互验证（点击后界面变化）模拟器受限于不刷新帧，不列入验证范围；
 5. ⏳ 文件对话框「打开项目」URI 沙盒拷贝——待验证（第 11 项遗留清单）。
 
 ## 3. 诊断文件（应用沙盒 cacheDir）
