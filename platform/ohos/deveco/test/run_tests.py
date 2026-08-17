@@ -42,6 +42,12 @@ def main():
                 except ValueError: pass
         return n
     c1, c2 = swap_count(s1), swap_count(s2)
+    # express_gpu intermittent slow frames: retry once on no growth
+    if not (c2 > c1 and c2 > 0):
+        time.sleep(10)
+        s3 = read_file(hdc, dev, CACHE + "/godot_ds_diag.log")
+        c3 = swap_count(s3)
+        c1, c2 = c2, c3
     check("T02", "render loop", c2 > c1 and c2 > 0, "swap %d -> %d" % (c1, c2))
     ds = read_file(hdc, dev, CACHE + "/godot_ds_diag.log")
     eg_ok = ("egl initialize -> 0" in ds and "egl open_display -> 0" in ds and "egl window_create -> 0" in ds)

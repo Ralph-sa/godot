@@ -29,6 +29,7 @@ import picker from '@ohos.file.picker';
 import fileshare from '@ohos.fileshare';
 // 文件系统操作（第 10 轮修复：文件对话框 URI -> 沙盒拷贝，@ohos.file.fs）
 import fs from '@ohos.file.fs';
+import { util } from '@kit.ArkTS';
 // 窗口模式（第 5 轮：全屏/最大化经 @ohos.window 应用）
 import window from '@ohos.window';
 // 系统指针（第 7 轮：鼠标捕获/隐藏；第 8 轮：光标形状 setPointerStyle）
@@ -96,6 +97,8 @@ struct Index {
   // 待回拷的保存文件映射（第 10 轮修复：沙盒 exports 路径 -> 用户选择的目标 URI），
   // 引擎写完文件后在下一次对话框操作或页面销毁时写回公共目录。
   private pendingExports: Map<string, string> = new Map<string, string>();
+  // URI -> 沙盒拷贝路径持久映射（T-FL-1：冷启动后 cache 清理、跨会话恢复拷贝）
+  private uriMap: Map<string, string> = new Map<string, string>();
 
   build() {
     Stack() {
@@ -250,6 +253,9 @@ struct Index {
           });
           // 屏幕枚举：查询全部屏幕并回传引擎（多屏支持）
           this.updateDisplays();
+          // T-FL-1：冷启动恢复持久 URI 的沙盒拷贝（跨会话文件读取）
+          this.loadUriMap();
+          this.restoreImports();
           // 主窗口 ID（光标样式设置用）
           this.queryMainWindowId();
         })
@@ -444,9 +450,73 @@ struct Index {
 
   // 把用户选择的 URI（文件或目录）拷贝到应用沙盒 imports 目录，
   // 回传沙盒真实路径（引擎 FileAccess 才能打开；公共目录 URI 无法直接访问）。
+  // URI->沙盒映射表持久化（T-FL-1 跨会话文件读取）
+  private saveUriMap(): void {
+    try {
+      let obj: Record<string, string> = {};
+      this.uriMap.forEach((value: string, key: string) => {
+        obj[key] = value;
+      });
+      let f = fs.openSync(this.getFilesDir() + '/uri_map.json', fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      fs.writeSync(f.fd, JSON.stringify(obj));
+      fs.closeSync(f);
+    } catch (e) {
+      console.error('GodotOHOS saveUriMap failed: ' + JSON.stringify(e));
+    }
+  }
+
+  private loadUriMap(): void {
+    try {
+      let path: string = this.getFilesDir() + '/uri_map.json';
+      if (fs.accessSync(path)) {
+        let f = fs.openSync(path, fs.OpenMode.READ_ONLY);
+        let stat = fs.statSync(path);
+        let buf = new ArrayBuffer(stat.size);
+        fs.readSync(f.fd, buf);
+        fs.closeSync(f);
+        let decoder = util.TextDecoder.create('utf-8');
+        let text = decoder.decodeToString(new Uint8Array(buf));
+        let obj = JSON.parse(text) as Record<string, string>;
+        let keys: string[] = Object.keys(obj);
+        for (let i = 0; i < keys.length; i++) {
+          this.uriMap.set(keys[i], obj[keys[i]]);
+        }
+      }
+    } catch (e) {
+      console.error('GodotOHOS loadUriMap failed: ' + JSON.stringify(e));
+    }
+  }
+
+  // 冷启动恢复：持久授权 URI 的沙盒拷贝若丢失则重新拷贝（T-FL-1）
+  private restoreImports(): void {
+    if (this.uriMap.size == 0) {
+      return;
+    }
+    let importBase: string = this.getFilesDir() + '/imports';
+    try {
+      fs.mkdirSync(importBase, true);
+    } catch (e) {
+      // 已存在
+    }
+    this.uriMap.forEach((sandboxPath: string, uri: string) => {
+      try {
+        if (fs.accessSync(sandboxPath)) {
+          return; // 拷贝仍在
+        }
+        let name: string = sandboxPath.substring(sandboxPath.lastIndexOf('/') + 1);
+        fs.copyFileSync(uri, sandboxPath);
+        console.info('GodotOHOS restoreImports: restored ' + name);
+      } catch (e) {
+        console.error('GodotOHOS restoreImports item failed: ' + JSON.stringify(e));
+      }
+    });
+  }
+
   private async copySelectionToSandbox(uris: string[]): Promise<string[]> {
     let out: string[] = [];
-    let importBase: string = this.getCacheDir() + '/imports';
+    // T-FL-1：imports 放 files 目录（持久）而非 cache——冷启动后 cache 可能
+    // 被系统清理，引擎记录的项目文件路径会失效。
+    let importBase: string = this.getFilesDir() + '/imports';
     try {
       fs.mkdirSync(importBase, true);
     } catch (e) {
@@ -474,10 +544,14 @@ struct Index {
           let r: string = await this.copyDirToSandbox(uri, dest);
           if (r.length > 0) {
             out.push(r);
+            this.uriMap.set(uri, r);
+            this.saveUriMap();
           }
         } else {
           fs.copyFileSync(uri, dest);
           out.push(dest);
+          this.uriMap.set(uri, dest);
+          this.saveUriMap();
         }
       } catch (e) {
         console.error('GodotOHOS copySelectionToSandbox item failed: ' + JSON.stringify(e));
