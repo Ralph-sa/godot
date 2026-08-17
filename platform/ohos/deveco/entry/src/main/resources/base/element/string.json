@@ -19,6 +19,10 @@
     {
       "name": "reason_datasync",
       "value": "跨设备数据同步（编辑器项目传输）"
+    },
+    {
+      "name": "reason_topmost",
+      "value": "编辑器子窗口置顶显示（瞬态窗口/弹出面板）"
     }
   ]
 }

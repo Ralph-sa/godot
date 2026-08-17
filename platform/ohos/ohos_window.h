@@ -90,6 +90,9 @@ private:
 	// 窗口模式（第 3 轮：全屏/最大化经 NAPI 请求 ArkUI 窗口）
 	DisplayServerEnums::WindowMode window_mode = DisplayServerEnums::WINDOW_MODE_WINDOWED;
 
+	// 瞬态父窗口（T-DS-4：window_set_transient 记录的父子关系）
+	DisplayServerEnums::WindowID transient_parent = DisplayServerEnums::INVALID_WINDOW_ID;
+
 	// XComponent 宿主（仅 MAIN/SUB 类型有效）
 	OHOS_XComponent *xcomponent = nullptr;
 
@@ -129,6 +132,9 @@ public:
 
 	DisplayServerEnums::WindowMode get_window_mode() const { return window_mode; }
 	void set_window_mode(DisplayServerEnums::WindowMode p_mode) { window_mode = p_mode; }
+
+	DisplayServerEnums::WindowID get_transient_parent() const { return transient_parent; }
+	void set_transient_parent(DisplayServerEnums::WindowID p_parent) { transient_parent = p_parent; }
 
 	// 窗口生命周期（骨架期：由 DisplayServer 调用；后续轮次桥接 ArkUI Window API）
 	Error show();

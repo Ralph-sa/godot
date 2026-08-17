@@ -613,6 +613,11 @@ void ohos_subwindow_move_to_foreground(int p_id) {
 	subwindow_call(5, p_id, 0, 0, 0, 0, nullptr);
 }
 
+void ohos_subwindow_set_topmost(int p_id, bool p_topmost) {
+	// T-DS-4：瞬态关系置顶状态同步（op 6；a=1 置顶 / a=0 取消）
+	subwindow_call(6, p_id, p_topmost ? 1 : 0, 0, 0, 0, nullptr);
+}
+
 void ohos_subwindow_set_visible(int p_id, bool p_visible) {
 	subwindow_call(4, p_id, p_visible ? 1 : 0, 0, 0, 0, nullptr);
 }

@@ -757,6 +757,10 @@ struct Index {
         // setWindowTopmost），降级用置顶近似；待系统 API 提供再替换。
         let win = window.findWindow(key);
         win.setWindowTopmost(true);
+      } else if (op == 6) {
+        // T-DS-4：瞬态关系置顶状态同步（a=1 置顶 / a=0 取消）
+        let win = window.findWindow(key);
+        win.setWindowTopmost(a == 1);
       }
     } catch (e) {
       // 子窗口操作失败：忽略（引擎内窗口状态已记录）

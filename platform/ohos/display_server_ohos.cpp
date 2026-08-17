@@ -655,6 +655,10 @@ DisplayServerEnums::WindowID DisplayServerOHOS::create_sub_window(DisplayServerE
 
 	// 请求 ArkTS 创建原生子窗口（@ohos.window createWindow）
 	ohos_subwindow_create(static_cast<int>(new_id), p_rect.position.x, p_rect.position.y, p_rect.size.x, p_rect.size.y);
+	// T-DS-4：透传瞬态父窗口（对应 x11 create_sub_window 的 window_set_transient 调用）
+	if (p_transient_parent != DisplayServerEnums::INVALID_WINDOW_ID) {
+		window_set_transient(new_id, p_transient_parent);
+	}
 	print_verbose(vformat("DisplayServerOHOS: create sub window %d (%dx%d)", new_id, p_rect.size.x, p_rect.size.y));
 	return new_id;
 }
@@ -676,6 +680,22 @@ void DisplayServerOHOS::delete_sub_window(DisplayServerEnums::WindowID p_id) {
 		// 主窗口不可删除
 		return;
 	}
+	// T-DS-4：删除前清理瞬态关系（该窗口作为子或父两侧都要断开）
+	OHOS_Window *wd = windows[p_id];
+	DisplayServerEnums::WindowID tp = wd->get_transient_parent();
+	if (tp != DisplayServerEnums::INVALID_WINDOW_ID && windows.has(tp)) {
+		transient_children[tp].erase(p_id);
+	}
+	if (transient_children.has(p_id)) {
+		for (const DisplayServerEnums::WindowID &child : transient_children[p_id]) {
+			if (windows.has(child)) {
+				windows[child]->set_transient_parent(DisplayServerEnums::INVALID_WINDOW_ID);
+				ohos_subwindow_set_topmost(static_cast<int>(child), false);
+			}
+		}
+		transient_children.erase(p_id);
+	}
+
 	// 请求 ArkTS 销毁原生子窗口，并释放引擎侧窗口对象
 	ohos_subwindow_destroy(static_cast<int>(p_id));
 	memdelete(windows[p_id]);
@@ -747,7 +767,36 @@ void DisplayServerOHOS::window_set_position(const Point2i &p_position, DisplaySe
 }
 
 void DisplayServerOHOS::window_set_transient(DisplayServerEnums::WindowID p_window, DisplayServerEnums::WindowID p_parent) {
-	// 骨架期：多窗口父子关系后续实现
+	// T-DS-4：瞬态父子关系。引擎侧记录关系，ArkTS 侧用置顶近似 z 序
+	//（鸿蒙无 transient 概念，setWindowTopmost 是当前最接近的语义）。
+	ERR_FAIL_COND(p_window == p_parent);
+	ERR_FAIL_COND_MSG(!windows.has(p_window), "Invalid window ID.");
+	OHOS_Window *wd_window = windows[p_window];
+
+	DisplayServerEnums::WindowID prev_parent = wd_window->get_transient_parent();
+	if (prev_parent == p_parent) {
+		return;
+	}
+
+	if (p_parent == DisplayServerEnums::INVALID_WINDOW_ID) {
+		// 解除瞬态关系
+		if (prev_parent != DisplayServerEnums::INVALID_WINDOW_ID && windows.has(prev_parent)) {
+			transient_children[prev_parent].erase(p_window);
+		}
+		wd_window->set_transient_parent(DisplayServerEnums::INVALID_WINDOW_ID);
+		if (p_window != DisplayServerEnums::MAIN_WINDOW_ID) {
+			ohos_subwindow_set_topmost(static_cast<int>(p_window), false);
+		}
+	} else {
+		ERR_FAIL_COND_MSG(!windows.has(p_parent), "Invalid parent window ID.");
+		ERR_FAIL_COND_MSG(prev_parent != DisplayServerEnums::INVALID_WINDOW_ID, "Window already has a transient parent.");
+		wd_window->set_transient_parent(p_parent);
+		transient_children[p_parent].insert(p_window);
+		if (p_window != DisplayServerEnums::MAIN_WINDOW_ID) {
+			ohos_subwindow_set_topmost(static_cast<int>(p_window), true);
+		}
+	}
+	print_verbose(vformat("DisplayServerOHOS: window_set_transient %d parent=%d", p_window, p_parent));
 }
 
 void DisplayServerOHOS::window_set_max_size(const Size2i p_size, DisplayServerEnums::WindowID p_window) {

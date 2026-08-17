@@ -38,6 +38,7 @@
 #include "core/math/vector2i.h"
 #include "core/object/object_id.h"
 #include "core/templates/hash_map.h"
+#include "core/templates/hash_set.h"
 #include "servers/display/display_server.h"
 #include "servers/display/native_menu.h"
 
@@ -75,6 +76,9 @@ public:
 private:
 	// 窗口哈希表：window_id -> OHOS_Window（骨架期只含主窗口）
 	HashMap<DisplayServerEnums::WindowID, OHOS_Window *> windows;
+
+	// 瞬态子窗口集合（T-DS-4）：父窗口 -> 其瞬态子窗口 id 集合
+	HashMap<DisplayServerEnums::WindowID, HashSet<DisplayServerEnums::WindowID>> transient_children;
 
 	// 主窗口 XComponent 宿主
 	OHOS_XComponent *main_xcomponent = nullptr;

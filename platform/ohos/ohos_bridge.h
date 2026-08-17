@@ -75,6 +75,7 @@ void ohos_subwindow_set_title(int p_id, const String &p_title);
 void ohos_subwindow_set_rect(int p_id, int p_x, int p_y, int p_w, int p_h);
 void ohos_subwindow_set_visible(int p_id, bool p_visible);
 void ohos_subwindow_move_to_foreground(int p_id);
+void ohos_subwindow_set_topmost(int p_id, bool p_topmost);
 
 // ---- 指针可见性桥（第 7 轮：@ohos.multimodalInput.pointer） ----
 // 鼠标捕获/隐藏（对应 macOS CGDisplayHideCursor / CGAssociateMouseAndMouseCursorPosition）
