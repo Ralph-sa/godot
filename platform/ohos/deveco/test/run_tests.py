@@ -60,6 +60,18 @@ def main():
     time.sleep(2)
     hl = sh(hdc, dev, "hilog -x 2>/dev/null | grep -E 'injectTouch NAPI|push_touch' | tail -3")
     check("T04", "input injection", ("injectTouch" in hl or "push_touch" in hl), "hilog " + str(len(hl)) + "B")
+    # T08 键盘注入（T-IN-1）：keyEvent 2017 = KEYCODE_A，验证 ArkTS onKeyEvent ->
+    # injectKey NAPI -> push_key_event 打点链路。
+    # 模拟器已知限制：uitest uiInput keyEvent 不生效（Back/Home/数字均无分发），
+    # 系统键盘事件段无法在模拟器验证；NAPI 段已由临时 ArkTS 注入验证过。
+    is_emulator = dev.startswith("127.0.0.1")
+    if is_emulator:
+        check("T08", "keyboard injection (SKIP on emulator: uitest keyEvent unsupported)", True, "emulator limitation; NAPI segment verified separately")
+    else:
+        sh(hdc, dev, "uitest uiInput keyEvent 2017 >/dev/null 2>&1")
+        time.sleep(2)
+        hk = sh(hdc, dev, "hilog -x 2>/dev/null | grep 'push_key' | tail -3")
+        check("T08", "keyboard injection", "push_key" in hk, "hilog " + str(len(hk)) + "B")
     # T04b 文件日志（NAPI fopen 若可用）
     inp = read_file(hdc, dev, CACHE + "/godot_input_diag.log")
     # T07 interaction response (screen changed after tap)
@@ -79,7 +91,6 @@ def main():
         # 模拟器已知限制：express_gpu 的 eglSwapBuffers 不更新帧内容
         #（画面仅启动首帧，窗口拉伸/交互均不刷新——真机无此问题）。
         # 模拟器上 T07 报 SKIP；真机（--device <手机序列号>）执行画面 diff。
-        is_emulator = dev.startswith("127.0.0.1")
         if is_emulator:
             check("T07", "interaction response (SKIP on emulator: swap doesn't refresh frames)", True, "emulator limitation; md5 " + h1[:8] + " -> " + h2[:8])
         else:

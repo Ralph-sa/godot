@@ -524,6 +524,12 @@ void OHOS_XComponent::push_mouse_event(int p_action, int p_button, const Vector2
 void OHOS_XComponent::push_key_event(int p_ohos_keycode, bool p_pressed) {
 	// ArkTS onKeyEvent 注入：OHOS KeyCode -> Godot Key（复用双枚举映射表）。
 	Key key = KeyMappingOHOS::translate_key(static_cast<unsigned int>(p_ohos_keycode));
+	// 输入链诊断（T-IN-1：键盘注入验证）
+	static int key_push_count = 0;
+	key_push_count++;
+	if (key_push_count <= 10 || key_push_count % 50 == 0) {
+		OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "push_key: n=%{public}d keycode=%{public}d pressed=%{public}d godot_key=%{public}d", key_push_count, p_ohos_keycode, p_pressed ? 1 : 0, static_cast<int>(key));
+	}
 	if (key == Key::NONE) {
 		return;
 	}
@@ -642,6 +648,12 @@ void OHOS_XComponent::push_wheel_event(const Vector2 &p_delta) {
 	// 滚轮增量入队：触控板双指滚动由 ArkTS 手势识别（onTouch 双指滑动）后
 	// 经 engine_inject_wheel NAPI 注入；XComponent 原生鼠标事件不携带滚轮。
 	// 与 macOS scrollWheel 的 scrollingDeltaY 语义一致（向下为正）。
+	// 输入链诊断（T-IN-2：滚轮注入验证）
+	static int wheel_push_count = 0;
+	wheel_push_count++;
+	if (wheel_push_count <= 10 || wheel_push_count % 50 == 0) {
+		OH_LOG_Print(LOG_APP, LOG_INFO, 0xD001, "GodotOHOS", "push_wheel: n=%{public}d dx=%{public}.1f dy=%{public}.1f", wheel_push_count, p_delta.x, p_delta.y);
+	}
 	Ref<InputEventMouseButton> ev;
 	ev.instantiate();
 	Vector2 pos(last_mouse_position);
