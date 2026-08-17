@@ -309,6 +309,9 @@ DisplayServerOHOS::DisplayServerOHOS(const String &p_rendering_driver, DisplaySe
 				Error we = egl_manager->window_create(DisplayServerEnums::MAIN_WINDOW_ID, EGL_DEFAULT_DISPLAY, native_window, p_size.x, p_size.y);
 				ohos_diag_log("DisplayServerOHOS: egl window_create -> %d", (int)we);
 			}
+			// 关闭 vsync（第 11 轮模拟器修复：express_gpu 的 eglSwapBuffers
+			// 在 vsync 等待时可能永久阻塞，导致渲染帧停滞在固定计数）
+			egl_manager->set_use_vsync(false);
 			// gles_over_gl = false：纯 GLES2/3 API（鸿蒙无桌面 GL）
 			RasterizerGLES3::make_current(false);
 			ohos_diag_log("DisplayServerOHOS: RasterizerGLES3 make_current(false) done");
