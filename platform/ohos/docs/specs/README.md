@@ -1,25 +1,24 @@
 # GodotHMOS 移植项目 · 模块规格集（Specs）
 
-> 状态：待审核（2026-08-17）——所有 spec 由规格驱动开发流程产出，
-> 用户审核通过后逐任务执行。验证门禁见技能 godot-ohos-verification
->（模拟器 7 项测试全 PASS）。
+> 状态：待审核（2026-08-17 第二轮：基于代码逐文件核对，非记忆总结）。
+> 验证门禁见技能 godot-ohos-verification（模拟器 7 项测试全 PASS）。
 
 ## 模块总览与优先级
 
 | # | 模块 | Spec 文件 | 状态 | 优先级 |
 |---|---|---|---|---|
-| M01 | OS 层 | spec-os.md | ✅ 完成 | — |
-| M02 | DisplayServer | spec-display-server.md | ✅ 主体完成 | — |
+| M01 | OS 层 | spec-os.md | ⚠️ shell_open/get_unique_id 空壳 | P1 |
+| M02 | DisplayServer | spec-display-server.md | ⚠️ 5 处空壳（transient/flag/attention/置前/命中） | P1 |
 | M03 | XComponent 宿主 | spec-xcomponent.md | ✅ 主体完成 | — |
 | M04 | 输入链 | spec-input.md | ✅ 完成 | — |
 | M05 | GLES/EGL 渲染 | spec-gles-egl.md | ✅ 完成 | — |
 | M06 | Vulkan 渲染 | spec-vulkan.md | ⏳ 部分 | P1 |
 | M07 | 音频输出/输入 | spec-audio.md | ⏳ 输出未验证/输入未实现 | P2 |
 | M08 | IME 输入法 | spec-ime.md | ⏳ 代码在未验证 | P2 |
-| M09 | 文件对话框与 URI | spec-files.md | ⏳ 部分 | P1 |
+| M09 | 文件对话框与 URI | spec-files.md | ⏳ 部分（fileAccess.open 与 drop files 双缺口） | P1 |
 | M10 | 子窗口与多窗口 | spec-subwindow.md | ⏳ 部分 | P2 |
 | M11 | 手柄输入 | spec-gamepad.md | ⏳ 轴未实现 | P3 |
-| M12 | 导出器 | spec-export.md | ⏳ 骨架 | P3 |
+| M12 | 导出器 | spec-export.md | ✅ 完整实现（263 行实体，修正旧判断） | P2 |
 | M13 | 构建与签名 | spec-build.md | ✅ 调试可用 | P3（生产化） |
 | M14 | 测试体系 | spec-testing.md | ✅ 完成 | — |
 
