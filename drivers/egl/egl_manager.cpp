@@ -85,6 +85,17 @@ int EGLManager::_get_gldisplay_id(void *p_display) {
 	GLDisplay new_gldisplay;
 	new_gldisplay.display = p_display;
 
+#ifdef OHOS_ENABLED
+	// 鸿蒙：优先 eglGetPlatformDisplay(OHOS_KHR)（真机路径），失败回退
+	// eglGetDisplay(EGL_DEFAULT_DISPLAY)（模拟器 express_gpu 路径）。
+	if (GLAD_EGL_VERSION_1_5) {
+		Vector<EGLAttrib> attribs = _get_platform_display_attributes();
+		new_gldisplay.egl_display = eglGetPlatformDisplay(_get_platform_extension_enum(), new_gldisplay.display, (attribs.size() > 0) ? attribs.ptr() : nullptr);
+	}
+	if (new_gldisplay.egl_display == EGL_NO_DISPLAY) {
+		new_gldisplay.egl_display = eglGetDisplay((EGLNativeDisplayType)EGL_DEFAULT_DISPLAY);
+	}
+#else
 	if (GLAD_EGL_VERSION_1_5) {
 		Vector<EGLAttrib> attribs = _get_platform_display_attributes();
 		new_gldisplay.egl_display = eglGetPlatformDisplay(_get_platform_extension_enum(), new_gldisplay.display, (attribs.size() > 0) ? attribs.ptr() : nullptr);
@@ -104,6 +115,7 @@ int EGLManager::_get_gldisplay_id(void *p_display) {
 		NativeDisplayType *native_display_type = (NativeDisplayType *)new_gldisplay.display;
 		new_gldisplay.egl_display = eglGetDisplay(*native_display_type);
 	}
+#endif // OHOS_ENABLED
 
 	ERR_FAIL_COND_V(eglGetError() != EGL_SUCCESS, -1);
 
@@ -566,7 +578,14 @@ Error EGLManager::initialize(void *p_native_display) {
 	if (eglGetError() == EGL_SUCCESS) {
 		const char *platform = _get_platform_extension_name();
 		if (!client_extensions_string.split(" ").has(platform)) {
+#ifdef OHOS_ENABLED
+			// 鸿蒙模拟器（express_gpu libEGL）不支持 EGL_KHR_platform_ohos，
+			// 真机 Maleoon 驱动支持。缺失时回退 eglGetDisplay(EGL_DEFAULT_DISPLAY)
+			//（探针实测模拟器可用），仅警告不报错。
+			WARN_PRINT(vformat("EGL platform extension \"%s\" not found, falling back to eglGetDisplay(EGL_DEFAULT_DISPLAY).", platform));
+#else
 			ERR_FAIL_V_MSG(ERR_UNAVAILABLE, vformat("EGL platform extension \"%s\" not found.", platform));
+#endif
 		}
 	}
 
