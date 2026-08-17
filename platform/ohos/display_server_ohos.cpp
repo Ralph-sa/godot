@@ -303,14 +303,15 @@ DisplayServerOHOS::DisplayServerOHOS(const String &p_rendering_driver, DisplaySe
 			if (!native_window) {
 				ERR_PRINT("DisplayServerOHOS: native_window not ready, cannot create EGL surface.");
 			} else {
-				// GLES buffer 原点在左下，鸿蒙合成器按左上合成：垂直翻转。
-				// 必须在 EGL surface 创建前设置（surface 创建时固定 buffer 属性，
-				// 真机实测创建后设置无效）
-				xc->set_surface_transform(NATIVEBUFFER_FLIP_V);
-				ohos_diag_log("DisplayServerOHOS: surface transform FLIP_V set (before window_create)");
+				// 不做 Y 翻转（第 11 轮修订）：真机 Maleoon EGL 驱动自身处理
+				// buffer 方向（画面正常）；模拟器 express_gpu 会应用 transform
+				// 导致画面上下颠倒。两平台均无需 FLIP_V。
 				Error we = egl_manager->window_create(DisplayServerEnums::MAIN_WINDOW_ID, EGL_DEFAULT_DISPLAY, native_window, p_size.x, p_size.y);
 				ohos_diag_log("DisplayServerOHOS: egl window_create -> %d", (int)we);
 			}
+			// 关闭 vsync（第 11 轮模拟器修复：express_gpu 的 eglSwapBuffers
+			// 在 vsync 等待时可能永久阻塞，导致渲染帧停滞在固定计数）
+			egl_manager->set_use_vsync(false);
 			// gles_over_gl = false：纯 GLES2/3 API（鸿蒙无桌面 GL）
 			RasterizerGLES3::make_current(false);
 			ohos_diag_log("DisplayServerOHOS: RasterizerGLES3 make_current(false) done");

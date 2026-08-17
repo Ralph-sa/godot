@@ -708,6 +708,18 @@ static napi_value engine_inject_wheel(napi_env env, napi_callback_info info) {
 // injectMouse(action, x, y, button) -> void
 //   action: 1=按下 2=抬起 3=移动；button: 0=左 1=右 2=中（MouseEvent.button）
 static napi_value engine_inject_mouse(napi_env env, napi_callback_info info) {
+	{
+		static int mouse_napi_count = 0;
+		mouse_napi_count++;
+		if (mouse_napi_count <= 5 || mouse_napi_count % 100 == 0) {
+			FILE *df = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_input_diag.log", "a");
+			if (df) {
+				fprintf(df, "injectMouse NAPI: n=%d", mouse_napi_count);
+				fputc('\n', df);
+				fclose(df);
+			}
+		}
+	}
 	size_t argc = 4;
 	napi_value args[4];
 	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -781,6 +793,19 @@ static napi_value engine_inject_resize(napi_env env, napi_callback_info info) {
 // injectTouch(type, id, x, y) -> void
 //   type: 0=按下 1=移动 2=抬起 3=取消（TouchType 对齐）
 static napi_value engine_inject_touch(napi_env env, napi_callback_info info) {
+	// 输入链诊断（第 11 轮）：NAPI 入口计数——区分 ArkTS 未调/回调未触发
+	{
+		static int inject_napi_count = 0;
+		inject_napi_count++;
+		if (inject_napi_count <= 5 || inject_napi_count % 100 == 0) {
+			FILE *df = fopen("/data/app/el2/100/base/com.godot.editor/haps/entry/cache/godot_input_diag.log", "a");
+			if (df) {
+				fprintf(df, "injectTouch NAPI: n=%d", inject_napi_count);
+				fputc('\n', df);
+				fclose(df);
+			}
+		}
+	}
 	size_t argc = 4;
 	napi_value args[4];
 	napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -804,6 +829,13 @@ static napi_value engine_inject_touch(napi_env env, napi_callback_info info) {
 	if (xc) {
 		float density = OS_OHOS::get_singleton() ? OS_OHOS::get_singleton()->get_screen_density() : 1.0f;
 		xc->push_touch_event(type, id, Vector2(static_cast<float>(x * density), static_cast<float>(y * density)));
+	} else {
+		// 输入链诊断（第 11 轮：定位模拟器/真机无法交互问题）
+		static int no_xc_count = 0;
+		no_xc_count++;
+		if (no_xc_count <= 5) {
+			ohos_diag_file_write("injectTouch: OHOS_XComponent 不存在");
+		}
 	}
 	return nullptr;
 }

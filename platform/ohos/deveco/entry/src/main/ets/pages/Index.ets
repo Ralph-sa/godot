@@ -137,6 +137,7 @@ struct Index {
           this.engineStarted = false;
         })
         .onTouch((event: TouchEvent) => {
+          console.info('GodotOHOS onTouch fired type=' + event.type);
           // 第 10 轮修复：surfaceId 路径下原生触摸回调不可用，
           // ArkTS 通用触摸事件分两路注入引擎：
           //  - 双指：触控板滚动手势（第 8 轮，注入滚轮事件）；
@@ -145,6 +146,7 @@ struct Index {
           this.injectTouchEvents(event);
         })
         .onMouse((event: MouseEvent) => {
+          console.info('GodotOHOS onMouse fired action=' + event.action);
           // 第 10 轮修复：鼠标事件经 NAPI 注入引擎（原生鼠标回调不可用）。
           // MouseAction: 1=按下 2=抬起 3=移动；MouseButton: 0=左 1=右 2=中。
           let action: number = event.action;
