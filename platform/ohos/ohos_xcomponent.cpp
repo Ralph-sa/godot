@@ -203,6 +203,11 @@ void OHOS_XComponent::on_surface_changed(int p_width, int p_height) {
 	}
 	size = new_size;
 	print_verbose(vformat("OHOS_XComponent: surface resized to %dx%d", p_width, p_height));
+	// 第 11 轮修复：窗口拉伸后更新 OHNativeWindow buffer 几何，否则
+	// EGL swap 的 buffer 保持启动尺寸，渲染内容不跟随窗口变化。
+	if (native_window) {
+		OH_NativeWindow_NativeWindowHandleOpt(native_window, SET_BUFFER_GEOMETRY, p_width, p_height);
+	}
 
 	// 通知 DisplayServer：引擎侧同步窗口尺寸、触发 rect_changed/window 事件
 	DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();

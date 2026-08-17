@@ -69,6 +69,8 @@ struct Index {
   private xcPxH: number = 0;
   // onLoad 获取的 surfaceId（启动延迟到 onAreaChange 拿到真实横屏尺寸后）
   private surfaceIdStr: string = '';
+  // native 输入模式（context 含 nativeXComponent 时走原生回调注册）
+  private nativeXcMode: boolean = false;
 
   // 页面级横屏锁定（与 EntryAbility 双保险：手机默认竖屏会压扁编辑器 UI）。
   // API 26 已不支持 module.json5 ability 级 orientation 字段（打包时被丢弃），
@@ -105,18 +107,40 @@ struct Index {
         libraryname: 'godot',
         controller: this.xcomponentController
       })
+        .hitTestBehavior(HitTestMode.Default)
+        .focusable(true)
+        .focusOnTouch(true)
         .onLoad((context?: object) => {
           // XComponent 加载：把 native 上下文传给 C++（注册输入事件回调）。
           // 部分设备/API 版本 onLoad 回调参数可能为空：兜底从 controller 获取
           //（XComponentController.getXComponentContext() 返回与回调参数相同的上下文）。
           console.info('GodotOHOS onLoad fired, context=' + context);
-          // API 26：onLoad 上下文不含 nativeXComponent（实测属性为 undefined），
-          // 统一走 surfaceId 路径：native 侧用
-          // OH_NativeWindow_CreateNativeWindowFromSurfaceId 直接创建渲染窗口，
-          // 不再依赖 OH_NativeXComponent 上下文对象。
-          let surfaceId: string = this.xcomponentController.getXComponentSurfaceId();
-          this.surfaceIdStr = surfaceId;
-          console.info('GodotOHOS onLoad surfaceId: ' + surfaceId);
+          // 第 11 轮输入修复：XComponent 的触摸事件由 native 层分发
+          //（NativeXComponentDispatchTouchEvent），未注册 native 回调时事件被
+          // 消费丢弃、ArkTS onTouch 收不到（模拟器 hilog 实证 Consumed）。
+          // 双路径：context 含 nativeXComponent（API 24 及旧版）→ 走 native
+          // 回调注册（触摸/鼠标/键盘原生事件）；不含（API 26）→ surfaceId +
+          // ArkTS 事件桥。
+          let hasNativeXc: boolean = false;
+          try {
+            let ctxObj = context as Record<string, Object>;
+            if (ctxObj && ctxObj.nativeXComponent !== undefined) {
+              hasNativeXc = true;
+            }
+          } catch (e) {
+            hasNativeXc = false;
+          }
+          console.info('GodotOHOS onLoad hasNativeXc=' + hasNativeXc);
+          if (hasNativeXc) {
+            // native 路径：注册输入回调（触摸走 native 分发）
+            godot.setXComponent(context);
+            this.nativeXcMode = true;
+          } else {
+            // surfaceId 路径（API 26）：OH_NativeWindow_CreateNativeWindowFromSurfaceId
+            let surfaceId: string = this.xcomponentController.getXComponentSurfaceId();
+            this.surfaceIdStr = surfaceId;
+            console.info('GodotOHOS onLoad surfaceId: ' + surfaceId);
+          }
           // 启动延迟到 onAreaChange（display API 返回默认方向尺寸，横屏下
           // 宽高颠倒；真实横屏尺寸只能从 XComponent onAreaChange 拿到）
           this.startEngineIfReady();
@@ -124,6 +148,12 @@ struct Index {
         .onBlur(() => {
           // 窗口失焦：通知引擎（XComponent focus 回调仅报告获得焦点）
           godot.notifyFocus(false);
+        })
+        .onTouch((event: TouchEvent) => {
+          // 第 11 轮输入修复：事件可能被 XComponent native 层消费不冒泡，
+          // 在 XComponent 上直接再绑一层（双保险，防重复注入由引擎侧去重）
+          console.info('GodotOHOS XComponent onTouch fired type=' + event.type);
+          this.injectTouchEvents(event);
         })
         .onFocus(() => {
           // 窗口获得焦点
@@ -275,7 +305,10 @@ struct Index {
   // 启动引擎（前置条件：surfaceId 已获取 + XComponent 真实尺寸已拿到）。
   // onLoad 与 onAreaChange 触发顺序不定，两者就绪后本方法由任一方调用。
   private startEngineIfReady(): void {
-    if (this.engineStarted || this.surfaceIdStr.length == 0 || this.xcPxW <= 0 || this.xcPxH <= 0) {
+    if (this.engineStarted || this.xcPxW <= 0 || this.xcPxH <= 0) {
+      return;
+    }
+    if (!this.nativeXcMode && this.surfaceIdStr.length == 0) {
       return;
     }
     // 编辑器桌面布局需要横向窗口：等待横屏尺寸（窗口旋转后 onAreaChange
@@ -285,7 +318,9 @@ struct Index {
       return;
     }
     console.info('GodotOHOS startEngine: sid=' + this.surfaceIdStr + ' px=' + this.xcPxW + 'x' + this.xcPxH + ' density=1.0-fixed');
-    godot.setXComponent(this.surfaceIdStr, this.xcPxW, this.xcPxH);
+    if (!this.nativeXcMode) {
+      godot.setXComponent(this.surfaceIdStr, this.xcPxW, this.xcPxH);
+    }
     if (GLES_PROBE_ONLY) {
       let probeResult: string = godot.testGLES(this.surfaceIdStr, this.xcPxW, this.xcPxH);
       console.info('GodotOHOS GLES_PROBE result: ' + probeResult);
