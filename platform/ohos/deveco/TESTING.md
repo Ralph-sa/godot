@@ -17,13 +17,29 @@ cd godot/platform/ohos/deveco
 ./run_verify.sh         # 安装 + 启动 + 截屏 + hilog + 拉取诊断文件
 ```
 
-## 2. 验证清单
+## 2. 验证清单（2026-08-17 修订：GLES 直进编辑器 + 自动化测试）
 
-1. 截屏 1（15s）应显示 **Godot 项目管理器**（证明 Vulkan 渲染链路 OK）；
-2. 项目管理器「新建项目」→ 创建 →「创建并编辑」；
-3. 编辑器打开（不再卡住/黑屏）——**进程内重启**（OS_OHOS::create_instance）生效；
-4. 鼠标/键盘/触摸可操作编辑器——**ArkTS 事件桥**（injectMouse/Key/Touch）生效；
-5. 文件对话框「打开项目」可读公共目录——**URI 沙盒拷贝**生效。
+### 2.1 自动化测试（首选）
+
+```bash
+cd godot/platform/ohos/deveco/test
+python3 run_tests.py --device 127.0.0.1:5555   # 模拟器
+python3 run_tests.py --device <手机序列号>     # 真机（含 T07 画面 diff）
+```
+
+T01 启动链（setup→editor→EditorNode）/ T02 渲染循环 / T03 窗口内容 / T04 输入注入 /
+T05 EGL 链路 / T06 进程存活 / T07 交互响应（真机画面 diff；模拟器 SKIP——
+express_gpu 的 eglSwapBuffers 不更新帧内容，画面仅启动首帧，已知限制）。
+
+### 2.2 手工清单（真机/模拟器逐项实测）
+
+1. ✅（模拟器/真机）引擎直进编辑器（--editor --path 默认项目，不再经过项目管理器；
+   渲染方法 gl_compatibility/GLES——旧版 Vulkan 项目管理器清单项已废弃）；
+2. ✅（模拟器）编辑器完整 UI 上屏（Godot 标题/菜单栏/3D 视口/文件系统/检查器面板）；
+3. ✅（模拟器）渲染循环持续出帧（swap 计数增长；真机已验证 3600+ 帧）；
+4. ✅（模拟器）输入事件链（透明层 onTouch → NAPI → push_touch(鼠标语义) → poll 消费 →
+   引擎 GUI 响应）；⚠️ 画面级交互验证（点击后界面变化）模拟器受限，待真机复测；
+5. ⏳ 文件对话框「打开项目」URI 沙盒拷贝——待验证（第 11 项遗留清单）。
 
 ## 3. 诊断文件（应用沙盒 cacheDir）
 

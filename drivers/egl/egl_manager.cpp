@@ -390,6 +390,11 @@ void EGLManager::release_current() {
 
 #ifdef OHOS_ENABLED
 void EGLManager::window_force_make_current(DisplayServerEnums::WindowID p_window_id) {
+	// INVALID_WINDOW_ID 防护（第 2 轮测试发现：点击触发子窗口/菜单时渲染
+	// 线程以 -1 调用——与基类 window_make_current 同语义，跳过而非报错）
+	if (p_window_id == DisplayServerEnums::INVALID_WINDOW_ID) {
+		return;
+	}
 	ERR_FAIL_INDEX(p_window_id, (int)windows.size());
 
 	GLWindow &glwindow = windows[p_window_id];
