@@ -1187,6 +1187,13 @@ static void engine_thread_main() {
 			if (ohos_xcomponent && !ohos_xcomponent->is_surface_ready()) {
 				OS::get_singleton()->delay_usec(16000);
 			}
+			// 输入事件消费：引擎核心 Main::iteration 只在 macOS 分支调用
+			// DisplayServer::process_events()，OHOS 走非 macOS 分支从不调用——
+			// 触摸/鼠标/键盘事件堆积在队列永不投递（输入全部无效的根因）。
+			// 每帧先消费事件再迭代（对应 macOS NSApp 事件泵位置）。
+			if (ds) {
+				ds->process_events();
+			}
 			// 单帧迭代：返回 true 表示引擎请求退出；false 表示继续
 			if (Main::iteration()) {
 				ohos_engine_diag("engine_thread: Main::iteration requested quit");

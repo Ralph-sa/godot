@@ -265,6 +265,9 @@ struct Index {
       .backgroundColor(Color.Transparent)
       .onTouch((event: TouchEvent) => {
         console.info('GodotOHOS overlay onTouch type=' + event.type);
+        // 触摸即焦点：透明事件层抢走 ArkUI 焦点导致 XComponent.onFocus 从不触发，
+        // 引擎窗口焦点状态一直为空（快捷键/IME 依赖焦点）。触摸即视为主窗口获焦。
+        godot.notifyFocus(true);
         this.injectTouchEvents(event);
       })
       .onMouse((event: MouseEvent) => {
