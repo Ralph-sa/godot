@@ -217,42 +217,6 @@ struct Index {
           // 首次拿到真实尺寸后启动引擎（onLoad 时 onAreaChange 尚未触发）
           this.startEngineIfReady();
         })
-        .onAppear(() => {
-          // 页面出现：注册剪贴板回调 + 文件选择器处理（@ohos.pasteboard / @ohos.file.picker）
-          godot.registerClipboard(
-            (text: string) => {
-              this.setClipboardText(text);
-            },
-            (): string => {
-              return this.getClipboardText();
-            });
-          godot.registerFilePicker((title: string, mode: number, suffixes: string) => {
-            this.openFilePicker(title, mode, suffixes);
-          });
-          godot.registerWindowHandler((mode: number) => {
-            this.applyWindowMode(mode);
-          });
-          // 子窗口处理器：引擎请求创建/调整原生子窗口（编辑器子窗口）
-          godot.registerSubWindowHandler((op: number, id: number, a: number, b: number, c: number, d: number, title: string) => {
-            this.handleSubWindow(op, id, a, b, c, d, title);
-          });
-          // 指针可见性处理器（鼠标捕获/隐藏）
-          godot.registerPointerHandler((visible: boolean) => {
-            this.setPointerVisible(visible);
-          });
-          // 光标形状处理器（第 8 轮：pointer.setPointerStyle）
-          godot.registerCursorHandler((shape: number) => {
-            this.setCursorShape(shape);
-          });
-          // 手柄设备枚举处理器（第 8 轮：inputDevice.getDeviceList 过滤 joystick）
-          godot.registerGamepadHandler(() => {
-            this.enumerateGamepads();
-          });
-          // 屏幕枚举：查询全部屏幕并回传引擎（多屏支持）
-          this.updateDisplays();
-          // 主窗口 ID（光标样式设置用）
-          this.queryMainWindowId();
-        })
         .width('100%')
         .height('100%')
     }
@@ -284,6 +248,53 @@ struct Index {
   .width('100%')
   .height('100%')
   .backgroundColor(Color.Black)
+  .onAppear(() => {
+    // 处理器注册统一放根容器 onAppear：XComponent 的 onAppear 在 surfaceId
+    // 路径下从不触发（hilog 实证），此前窗口模式/剪贴板/文件选择器等全部
+    // 处理器从未注册——编辑器「最大化」等窗口请求无响应。
+    console.info('GodotOHOS rootStack onAppear fired');
+    this.registerEngineHandlers();
+  })
+  }
+
+  // ---- 引擎处理器注册（根容器 onAppear 统一调用） ----
+
+  // 剪贴板/文件选择器/窗口模式/子窗口/指针/光标/手柄等处理器注册。
+  // XComponent 的 onAppear 在 surfaceId 路径下从不触发，注册统一放根容器。
+  private registerEngineHandlers(): void {
+    godot.registerClipboard(
+      (text: string) => {
+        this.setClipboardText(text);
+      },
+      (): string => {
+        return this.getClipboardText();
+      });
+    godot.registerFilePicker((title: string, mode: number, suffixes: string) => {
+      this.openFilePicker(title, mode, suffixes);
+    });
+    godot.registerWindowHandler((mode: number) => {
+      this.applyWindowMode(mode);
+    });
+    // 子窗口处理器：引擎请求创建/调整原生子窗口（编辑器子窗口）
+    godot.registerSubWindowHandler((op: number, id: number, a: number, b: number, c: number, d: number, title: string) => {
+      this.handleSubWindow(op, id, a, b, c, d, title);
+    });
+    // 指针可见性处理器（鼠标捕获/隐藏）
+    godot.registerPointerHandler((visible: boolean) => {
+      this.setPointerVisible(visible);
+    });
+    // 光标形状处理器（第 8 轮：pointer.setPointerStyle）
+    godot.registerCursorHandler((shape: number) => {
+      this.setCursorShape(shape);
+    });
+    // 手柄设备枚举处理器（第 8 轮：inputDevice.getDeviceList 过滤 joystick）
+    godot.registerGamepadHandler(() => {
+      this.enumerateGamepads();
+    });
+    // 屏幕枚举：查询全部屏幕并回传引擎（多屏支持）
+    this.updateDisplays();
+    // 主窗口 ID（光标样式设置用）
+    this.queryMainWindowId();
   }
 
   // 获取应用沙盒 files 目录（鸿蒙 Stage 模型）
