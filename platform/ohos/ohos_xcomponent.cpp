@@ -204,13 +204,12 @@ void OHOS_XComponent::on_surface_changed(int p_width, int p_height) {
 	}
 	size = new_size;
 	print_verbose(vformat("OHOS_XComponent: surface resized to %dx%d", p_width, p_height));
-	// 第 11 轮修复：窗口拉伸后更新 OHNativeWindow buffer 几何，否则
-	// EGL swap 的 buffer 保持启动尺寸，渲染内容不跟随窗口变化。
-	if (native_window) {
-		OH_NativeWindow_NativeWindowHandleOpt(native_window, SET_BUFFER_GEOMETRY, p_width, p_height);
-	}
+	// 拖拽崩溃修复：SET_BUFFER_GEOMETRY 禁止在本回调执行——本回调运行在
+	// JS 主线程（injectResize NAPI），与引擎渲染线程使用 native_window 的
+	// EGL 操作竞争（实测拖拽窗口直接崩溃）。buffer 几何更新移至引擎线程
+	//（DisplayServerOHOS::process_events 的 RESIZE 消费，见 RESIZE 分支）。
 
-	// 通知 DisplayServer：引擎侧同步窗口尺寸、触发 rect_changed/window 事件
+	// 通知 DisplayServer：入队 RESIZE 事件，引擎线程统一处理
 	DisplayServerOHOS *ds = DisplayServerOHOS::get_singleton_ohos();
 	if (ds) {
 		ds->notify_main_surface_resized();

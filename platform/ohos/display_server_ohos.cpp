@@ -38,6 +38,7 @@
 #include "main/main.h"
 
 #include <hilog/log.h>
+#include <native_window/external_window.h>
 #include <thread>
 #include <chrono>
 #include <cstdio>
@@ -505,6 +506,13 @@ void DisplayServerOHOS::process_events() {
 			if (ev.size == window_size) {
 				continue;
 			}
+			// 引擎线程更新 OHNativeWindow buffer 几何：拖拽崩溃修复——
+			// 此操作原在 JS 主线程（injectResize NAPI 内）执行，与渲染线程
+			// EGL 操作竞争导致拖拽窗口直接崩溃。此处与渲染同线程，安全。
+			// buffer 几何更新后 EGL 渲染尺寸跟随窗口（渲染大小跟随的关键）。
+			if (main_xcomponent && main_xcomponent->get_native_window()) {
+				OH_NativeWindow_NativeWindowHandleOpt(main_xcomponent->get_native_window(), SET_BUFFER_GEOMETRY, ev.size.x, ev.size.y);
+			}
 			window_size = ev.size;
 			win->set_rect(Rect2i(win->get_rect().position, ev.size));
 			Callable rect_cb = win->get_rect_changed_callback();
@@ -523,8 +531,10 @@ void DisplayServerOHOS::process_events() {
 // ---- 窗口通知（XComponent 回调触发） ----
 
 void DisplayServerOHOS::notify_main_surface_resized() {
-	// Surface 尺寸变化：同步窗口尺寸并触发 rect_changed 回调，
-	// 编辑器 Viewport 据此重设渲染尺寸（对应 macOS windowDidResize）
+	// Surface 尺寸变化：入队 RESIZE 事件，引擎线程 process_events 时统一
+	// 更新 buffer 几何/窗口尺寸并触发 rect_changed 回调。
+	// 本方法由 JS 主线程（injectResize NAPI）调用，禁止在此直接操作
+	// native_window（与渲染线程竞争崩溃）或 call 引擎回调（跨线程）。
 	if (!main_xcomponent || !windows.has(DisplayServerEnums::MAIN_WINDOW_ID)) {
 		return;
 	}
@@ -532,15 +542,10 @@ void DisplayServerOHOS::notify_main_surface_resized() {
 	if (new_size == window_size) {
 		return;
 	}
-	window_size = new_size;
-	OHOS_Window *win = windows[DisplayServerEnums::MAIN_WINDOW_ID];
-	win->set_rect(Rect2i(win->get_rect().position, new_size));
-
-	// 触发 rect_changed 回调（引擎 Viewport 更新）
-	Callable rect_cb = win->get_rect_changed_callback();
-	if (rect_cb.is_valid()) {
-		rect_cb.call(win->get_rect());
-	}
+	MutexLock lock(window_events_mutex);
+	OHOSWindowEvent ev(OHOSWindowEvent::RESIZE);
+	ev.size = new_size;
+	pending_window_events.push_back(ev);
 }
 
 void DisplayServerOHOS::notify_main_surface_focus(bool p_focused) {
