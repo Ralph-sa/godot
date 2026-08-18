@@ -96,6 +96,10 @@ struct Index {
   // 待回拷的保存文件映射（第 10 轮修复：沙盒 exports 路径 -> 用户选择的目标 URI），
   // 引擎写完文件后在下一次对话框操作或页面销毁时写回公共目录。
   private pendingExports: Map<string, string> = new Map<string, string>();
+  // 窗口焦点状态缓存：触摸即焦点去重——每次触摸事件(down/move/up)都发
+  // notifyFocus(true) 会造成焦点事件风暴/IME 反复附加，编辑器菜单点击时
+  // 界面频繁切换窗口闪烁。仅状态变化时通知。
+  private windowFocusState: boolean = false;
 
   build() {
     Stack() {
@@ -151,7 +155,10 @@ struct Index {
         })
         .onBlur(() => {
           // 窗口失焦：通知引擎（XComponent focus 回调仅报告获得焦点）
-          godot.notifyFocus(false);
+          if (this.windowFocusState) {
+            this.windowFocusState = false;
+            godot.notifyFocus(false);
+          }
         })
         .onTouch((event: TouchEvent) => {
           // 第 11 轮输入修复：事件可能被 XComponent native 层消费不冒泡，
@@ -161,7 +168,10 @@ struct Index {
         })
         .onFocus(() => {
           // 窗口获得焦点
-          godot.notifyFocus(true);
+          if (!this.windowFocusState) {
+            this.windowFocusState = true;
+            godot.notifyFocus(true);
+          }
         })
         .onDestroy(() => {
           // 页面销毁：写回待保存文件，停止并释放引擎
@@ -267,7 +277,12 @@ struct Index {
         console.info('GodotOHOS overlay onTouch type=' + event.type);
         // 触摸即焦点：透明事件层抢走 ArkUI 焦点导致 XComponent.onFocus 从不触发，
         // 引擎窗口焦点状态一直为空（快捷键/IME 依赖焦点）。触摸即视为主窗口获焦。
-        godot.notifyFocus(true);
+        // 去重：仅未聚焦时通知，避免每次触摸事件重复通知造成焦点事件风暴
+        //（菜单点击界面频繁切换窗口闪烁的根因）。
+        if (!this.windowFocusState) {
+          this.windowFocusState = true;
+          godot.notifyFocus(true);
+        }
         this.injectTouchEvents(event);
       })
       .onMouse((event: MouseEvent) => {

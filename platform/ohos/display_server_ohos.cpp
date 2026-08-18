@@ -553,6 +553,11 @@ void DisplayServerOHOS::notify_main_surface_focus(bool p_focused) {
 	// 时触发 WINDOW_EVENT_FOCUS_IN/OUT 回调（对应 macOS windowDidBecomeMain /
 	// windowDidResignMain）。本方法由 JS 主线程（notifyFocus NAPI）调用，
 	// 回调不能跨线程执行（否则 SceneTree 线程断言/跨线程访问崩溃）。
+	// 去重：状态相同直接返回——重复通知会造成 FOCUS 事件风暴与 IME
+	// 反复附加（编辑器菜单点击时界面频繁切换窗口闪烁的根因）。
+	if (main_window_focused == p_focused) {
+		return;
+	}
 	main_window_focused = p_focused;
 	// 窗口聚焦：重新附加输入法（失焦时已分离）；失焦：分离输入法
 	// （文本控件不再接收组合文本）
