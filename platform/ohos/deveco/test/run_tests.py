@@ -4,6 +4,7 @@
 import argparse, subprocess, sys, time
 
 CACHE = "/data/app/el2/100/base/com.godot.editor/haps/entry/cache"
+FAULTLOG = "/data/log/faultlog/faultlogger"
 
 def sh(hdc, device, cmd, timeout=60):
     full = [hdc] + (["-t", device] if device else []) + ["shell", cmd]
@@ -28,6 +29,9 @@ def main():
     def check(tid, name, ok, detail=""):
         results.append((tid, name, ok, detail))
         print(("[PASS] " if ok else "[FAIL] ") + tid + " " + name + ((" | " + detail) if detail else ""))
+    # T09 崩溃检测基线：测试开始时记录 faultlog 已有崩溃文件，
+    # 测试结束时对比——新增 jscrash/cppcrash 即本次运行崩溃。
+    crash_baseline = set(sh(hdc, dev, "ls " + FAULTLOG + " 2>/dev/null").split())
     marker = read_file(hdc, dev, CACHE + "/godot_marker.log")
     ok = ("globals->setup OK" in marker and "start: editor=1" in marker and "EditorNode: ctor done" in marker)
     check("T01", "startup chain", ok, "marker " + str(len(marker)) + "B")
@@ -42,6 +46,12 @@ def main():
                 except ValueError: pass
         return n
     c1, c2 = swap_count(s1), swap_count(s2)
+    # express_gpu 间歇慢帧：无增长时 10s 重试一次（真机无此问题）
+    if not (c2 > c1 and c2 > 0):
+        time.sleep(10)
+        s3 = read_file(hdc, dev, CACHE + "/godot_ds_diag.log")
+        c3 = swap_count(s3)
+        c1, c2 = c2, c3
     check("T02", "render loop", c2 > c1 and c2 > 0, "swap %d -> %d" % (c1, c2))
     ds = read_file(hdc, dev, CACHE + "/godot_ds_diag.log")
     eg_ok = ("egl initialize -> 0" in ds and "egl open_display -> 0" in ds and "egl window_create -> 0" in ds)
@@ -54,6 +64,12 @@ def main():
     time.sleep(2)
     hl = sh(hdc, dev, "hilog -x 2>/dev/null | grep -E 'injectTouch NAPI|push_touch' | tail -3")
     check("T04", "input injection", ("injectTouch" in hl or "push_touch" in hl), "hilog " + str(len(hl)) + "B")
+    # T10 输入消费验证：注入成功(T04)不代表引擎消费——消费链断是「注入到队列
+    # 堆积、引擎从不消费」的根因（历史 bug：process_events 未每帧调用）。
+    # 点击后引擎线程应产生 poll_events: consumed 打点。
+    time.sleep(2)
+    cs = sh(hdc, dev, "hilog -x 2>/dev/null | grep -E 'poll_events: consumed' | tail -3")
+    check("T10", "input consumed (engine processes events)", "poll_events: consumed" in cs, "hilog " + str(len(cs)) + "B")
     # T04b 文件日志（NAPI fopen 若可用）
     inp = read_file(hdc, dev, CACHE + "/godot_input_diag.log")
     # T07 interaction response (screen changed after tap)
@@ -99,6 +115,11 @@ def main():
         check("T03", "window content", ok, "%dx%d dark=%.0f%% mid=%.0f%%" % (w, h, 100*dark/n, 100*mid/n))
     except Exception as e:
         check("T03", "window content", False, str(e))
+    # T09 崩溃检测：faultlogger 异步写入，sleep 后对比基线。
+    time.sleep(3)
+    crash_now = set(sh(hdc, dev, "ls " + FAULTLOG + " 2>/dev/null").split())
+    new_crashes = sorted(f for f in (crash_now - crash_baseline) if f.startswith(("jscrash", "cppcrash")))
+    check("T09", "no crash during test", not new_crashes, ("new: " + ",".join(new_crashes)) if new_crashes else "clean")
     fails = [r for r in results if not r[2]]
     print("\n==== %d PASS / %d FAIL ====" % (len(results)-len(fails), len(fails)))
     for r in fails:

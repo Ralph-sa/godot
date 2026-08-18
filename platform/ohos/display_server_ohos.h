@@ -37,7 +37,9 @@
 #include "core/math/rect2.h"
 #include "core/math/vector2i.h"
 #include "core/object/object_id.h"
+#include "core/os/mutex.h"
 #include "core/templates/hash_map.h"
+#include "core/templates/vector.h"
 #include "servers/display/display_server.h"
 #include "servers/display/native_menu.h"
 
@@ -75,6 +77,18 @@ public:
 private:
 	// 窗口哈希表：window_id -> OHOS_Window（骨架期只含主窗口）
 	HashMap<DisplayServerEnums::WindowID, OHOS_Window *> windows;
+
+	// 跨线程窗口事件队列：notify_* 由 JS 主线程（NAPI）调用，窗口回调
+	//（rect_changed / window_event）必须在引擎线程执行，否则触发 SceneTree
+	// 线程断言/跨线程访问崩溃。入队后由引擎线程 process_events 消费。
+	struct OHOSWindowEvent {
+		enum Type { RESIZE, FOCUS_IN, FOCUS_OUT } type;
+		Size2i size;
+		OHOSWindowEvent() {}
+		OHOSWindowEvent(Type p_type) : type(p_type) {}
+	};
+	Mutex window_events_mutex;
+	Vector<OHOSWindowEvent> pending_window_events;
 
 	// 主窗口 XComponent 宿主
 	OHOS_XComponent *main_xcomponent = nullptr;
