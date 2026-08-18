@@ -523,10 +523,8 @@ void DisplayServerOHOS::process_events() {
 // ---- 窗口通知（XComponent 回调触发） ----
 
 void DisplayServerOHOS::notify_main_surface_resized() {
-	// Surface 尺寸变化：入队 RESIZE 事件，引擎线程 process_events 时同步
-	// 窗口尺寸并触发 rect_changed 回调（对应 macOS windowDidResize）。
-	// 本方法由 JS 主线程（injectResize NAPI）调用，回调不能跨线程执行
-	//（否则 SceneTree 线程断言/跨线程访问崩溃——与焦点通知同因）。
+	// Surface 尺寸变化：同步窗口尺寸并触发 rect_changed 回调，
+	// 编辑器 Viewport 据此重设渲染尺寸（对应 macOS windowDidResize）
 	if (!main_xcomponent || !windows.has(DisplayServerEnums::MAIN_WINDOW_ID)) {
 		return;
 	}
@@ -534,10 +532,15 @@ void DisplayServerOHOS::notify_main_surface_resized() {
 	if (new_size == window_size) {
 		return;
 	}
-	MutexLock lock(window_events_mutex);
-	OHOSWindowEvent ev(OHOSWindowEvent::RESIZE);
-	ev.size = new_size;
-	pending_window_events.push_back(ev);
+	window_size = new_size;
+	OHOS_Window *win = windows[DisplayServerEnums::MAIN_WINDOW_ID];
+	win->set_rect(Rect2i(win->get_rect().position, new_size));
+
+	// 触发 rect_changed 回调（引擎 Viewport 更新）
+	Callable rect_cb = win->get_rect_changed_callback();
+	if (rect_cb.is_valid()) {
+		rect_cb.call(win->get_rect());
+	}
 }
 
 void DisplayServerOHOS::notify_main_surface_focus(bool p_focused) {
